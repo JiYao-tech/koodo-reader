@@ -2,10 +2,9 @@ import React from "react";
 import "./popupRefer.css";
 import { PopupReferProps, PopupReferStates } from "./interface";
 import { getIframeDoc } from "../../../utils/reader/docUtil";
-import { isReadingRawPDF, openExternalUrl } from "../../../utils/common";
+import { openExternalUrl } from "../../../utils/common";
 import Parser from "html-react-parser";
 import { ConfigService } from "../../../assets/lib/kookit-extra-browser.min";
-import toast from "react-hot-toast";
 
 class PopupRefer extends React.Component<PopupReferProps, PopupReferStates> {
   highlighter: any;
@@ -71,14 +70,6 @@ class PopupRefer extends React.Component<PopupReferProps, PopupReferStates> {
       openExternalUrl(href);
       return true;
     }
-    if (result.redirectChapter) {
-      let prevPosition = ConfigService.getObjectConfig(
-        this.props.currentBook.key,
-        "recordLocation",
-        {}
-      );
-      this.props.handleJumpPosition(prevPosition);
-    }
     if (result.isJump) {
       this.setState({
         isJump: true,
@@ -124,15 +115,21 @@ class PopupRefer extends React.Component<PopupReferProps, PopupReferStates> {
     }
     posX = posX - 135 + pageSize.left;
     if (
-      isReadingRawPDF(this.props.currentBook) &&
+      this.props.currentBook.format === "PDF" &&
       this.props.readerMode === "double" &&
-      this.props.chapterDocIndex % 2 === 1
+      this.props.chapterDocIndex % 2 === 1 &&
+      !ConfigService.getAllListConfig("convertPDFBooks").includes(
+        this.props.currentBook.key
+      )
     ) {
       posX = posX + pageSize.sectionWidth + pageSize.gap;
     }
     if (
-      isReadingRawPDF(this.props.currentBook) &&
-      this.props.readerMode === "scroll"
+      this.props.currentBook.format === "PDF" &&
+      this.props.readerMode === "scroll" &&
+      !ConfigService.getAllListConfig("convertPDFBooks").includes(
+        this.props.currentBook.key
+      )
     ) {
       posY = posY + this.props.chapterDocIndex * pageSize.sectionHeight;
     }
@@ -180,7 +177,6 @@ class PopupRefer extends React.Component<PopupReferProps, PopupReferStates> {
                   navigator.clipboard.writeText(
                     this.state.footnote.replace(/<[^>]+>/g, "").trim()
                   );
-                  toast.success(this.props.t("Copying successful"));
                 }}
               >
                 {this.props.t("Copy")}

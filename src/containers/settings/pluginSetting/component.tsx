@@ -5,11 +5,9 @@ import _ from "underscore";
 
 import toast from "react-hot-toast";
 import {
-  getWebsiteLang,
   getWebsiteUrl,
   handleContextMenu,
   openExternalUrl,
-  vexComfirmAsync,
   vexOpenAsync,
 } from "../../../utils/common";
 
@@ -24,8 +22,6 @@ import { createBuiltinPluginRecord } from "../../../utils/plugins/records";
 import {
   verifyCustomRendererPlugin,
   isCustomRendererPlugin,
-  isCustomVoicePlugin,
-  verifyCustomVoicePlugin,
 } from "../../../utils/plugins/customPlugin";
 import type { PluginConfig, PluginVoice } from "../../../utils/plugins/types";
 
@@ -80,20 +76,10 @@ class SettingDialog extends React.Component<
     this.setState({ availablePlugins: pluginList });
   };
   getPluginTutorialUrl = () =>
-    getWebsiteUrl() + getWebsiteLang() + "/plugin";
-  handleOpenAddNew = async (scrollToTop = false) => {
-    if (window.electronAPI?.runtime?.windowsStore) {
-      return;
-    }
-    const result = await vexComfirmAsync("Custom plugin security warning");
-    if (!result) return;
-    this.setState({ isAddNew: true }, () => {
-      if (scrollToTop) {
-        const infoEl = document.querySelector(".setting-dialog-info");
-        if (infoEl) infoEl.scrollTop = 0;
-      }
-    });
-  };
+    getWebsiteUrl() +
+    (ConfigService.getReaderConfig("lang")?.startsWith("zh")
+      ? "/zh/plugin"
+      : "/en/plugin");
   handleFillVoiceList = (pluginKey: string, example: PluginVoice[]) =>
     new Promise<PluginVoice[] | false>((resolve) => {
       window.vex.dialog.buttons.YES.text = this.props.t("Confirm");
@@ -207,87 +193,22 @@ class SettingDialog extends React.Component<
                   if (value) {
                     try {
                       const parsed = JSON.parse(value);
+                      if (parsed?.type === "voice") {
+                        toast.error(
+                          this.props.t("Custom voice plugins are not supported")
+                        );
+                        return;
+                      }
                       const plugin = {
                         ...parsed,
                         key: parsed.identifier || parsed.key,
                       };
-                      if (plugin.type === "voice" && !isElectron) {
-                        toast.error(
-                          this.props.t(
-                            "Only desktop version supports TTS plugin"
-                          )
-                        );
+                      if (
+                        !isCustomRendererPlugin(plugin) ||
+                        !(await verifyCustomRendererPlugin(plugin))
+                      ) {
+                        toast.error(this.props.t("Plugin verification failed"));
                         return;
-                      }
-                      if (plugin.type === "voice") {
-                        if (
-                          !isCustomVoicePlugin(plugin) ||
-                          !(await verifyCustomVoicePlugin(plugin))
-                        ) {
-                          toast.error(
-                            this.props.t("Plugin verification failed")
-                          );
-                          return;
-                        }
-                        if (
-                          !Array.isArray(plugin.voiceList) ||
-                          plugin.voiceList.length === 0
-                        ) {
-                          try {
-                            const voiceList = await window.electronAPI.invoke<
-                              PluginVoice[]
-                            >("get-tts-voices", {
-                              pluginKey: plugin.key,
-                              config: plugin.config || {},
-                              script: plugin.script,
-                              scriptSHA256: plugin.scriptSHA256,
-                            });
-                            if (
-                              !Array.isArray(voiceList) ||
-                              voiceList.length === 0 ||
-                              voiceList.some(
-                                (voice) =>
-                                  !voice ||
-                                  typeof voice !== "object" ||
-                                  typeof voice.name !== "string" ||
-                                  !voice.name ||
-                                  typeof voice.displayName !== "string" ||
-                                  !voice.displayName ||
-                                  !voice.config ||
-                                  typeof voice.config !== "object" ||
-                                  Array.isArray(voice.config)
-                              )
-                            ) {
-                              throw new Error("Invalid voice list");
-                            }
-                            plugin.voiceList = voiceList.map((voice) => ({
-                              ...voice,
-                              plugin: plugin.key,
-                            }));
-                          } catch {
-                            toast.error(
-                              this.props.t("Failed to get TTS voice list")
-                            );
-                            return;
-                          }
-                        } else {
-                          plugin.voiceList = plugin.voiceList.map(
-                            (voice: PluginVoice) => ({
-                              ...voice,
-                              plugin: plugin.key,
-                            })
-                          );
-                        }
-                      } else {
-                        if (
-                          !isCustomRendererPlugin(plugin) ||
-                          !(await verifyCustomRendererPlugin(plugin))
-                        ) {
-                          toast.error(
-                            this.props.t("Plugin verification failed")
-                          );
-                          return;
-                        }
                       }
                       if (
                         this.props.plugins.find(
@@ -327,9 +248,14 @@ class SettingDialog extends React.Component<
                   className="voice-add-cancel"
                   style={{ marginRight: "10px" }}
                   onClick={() => {
-                    openExternalUrl(
-                      getWebsiteUrl() + getWebsiteLang() + "/plugin"
-                    );
+                    if (
+                      ConfigService.getReaderConfig("lang") &&
+                      ConfigService.getReaderConfig("lang").startsWith("zh")
+                    ) {
+                      openExternalUrl(getWebsiteUrl() + "/zh/plugin");
+                    } else {
+                      openExternalUrl(getWebsiteUrl() + "/en/plugin");
+                    }
                   }}
                 >
                   <Trans>Document</Trans>
@@ -347,7 +273,12 @@ class SettingDialog extends React.Component<
             marginTop: "20px",
           }}
         >
-          <span style={{}} onClick={() => this.handleOpenAddNew(false)}>
+          <span
+            style={{}}
+            onClick={async () => {
+              this.setState({ isAddNew: true });
+            }}
+          >
             <Trans>Installed</Trans>
           </span>
         </div>
@@ -405,7 +336,12 @@ class SettingDialog extends React.Component<
             marginTop: "20px",
           }}
         >
-          <span style={{}} onClick={() => this.handleOpenAddNew(false)}>
+          <span
+            style={{}}
+            onClick={async () => {
+              this.setState({ isAddNew: true });
+            }}
+          >
             <Trans>Plugin market</Trans>
           </span>
         </div>
@@ -423,32 +359,32 @@ class SettingDialog extends React.Component<
                 dictionary: this.dictionaryRef,
                 voice: this.voiceRef,
               };
-              return (
-                <div
-                  key={type}
-                  className={`plugin-tab-item${this.state.activePluginTab === type ? " plugin-tab-item-active" : ""}`}
-                  onClick={() => {
-                    this.setState({ activePluginTab: type });
-                    const ref = refMap[type].current;
-                    if (ref) {
-                      const scrollContainer = document.querySelector(
-                        ".setting-dialog-info"
-                      ) as HTMLElement;
-                      if (scrollContainer) {
-                        const containerRect =
-                          scrollContainer.getBoundingClientRect();
-                        const refRect = ref.getBoundingClientRect();
-                        const tabBarHeight = 40;
-                        scrollContainer.scrollTop +=
-                          refRect.top - containerRect.top - tabBarHeight;
-                      }
+            return (
+              <div
+                key={type}
+                className={`plugin-tab-item${this.state.activePluginTab === type ? " plugin-tab-item-active" : ""}`}
+                onClick={() => {
+                  this.setState({ activePluginTab: type });
+                  const ref = refMap[type].current;
+                  if (ref) {
+                    const scrollContainer = document.querySelector(
+                      ".setting-dialog-info"
+                    ) as HTMLElement;
+                    if (scrollContainer) {
+                      const containerRect =
+                        scrollContainer.getBoundingClientRect();
+                      const refRect = ref.getBoundingClientRect();
+                      const tabBarHeight = 40;
+                      scrollContainer.scrollTop +=
+                        refRect.top - containerRect.top - tabBarHeight;
                     }
-                  }}
-                >
-                  {labelMap[type]}
-                </div>
-              );
-            })}
+                  }
+                }}
+              >
+                {labelMap[type]}
+              </div>
+            );
+          })}
         </div>
         {this.state.availablePlugins &&
           this.state.availablePlugins.map((item, index: number) => {
@@ -655,45 +591,46 @@ class SettingDialog extends React.Component<
             );
           })}
 
-        {!window.electronAPI?.runtime?.windowsStore && (
-          <div className="setting-dialog-new-plugin">
-            <span
-              style={{ textDecoration: "underline", marginRight: "20px" }}
-              onClick={() => {
-                openExternalUrl(this.getPluginTutorialUrl());
-              }}
-            >
-              <Trans>Visit online version</Trans>
-            </span>
-            <span
-              style={{ textDecoration: "underline" }}
-              onClick={() => {
-                if (
-                  ConfigService.getReaderConfig("lang") &&
-                  ConfigService.getReaderConfig("lang").startsWith("zh")
-                ) {
-                  openExternalUrl(
-                    "https://github.com/koodo-reader/plugins/blob/main/README_CN.md"
-                  );
-                } else {
-                  openExternalUrl(
-                    "https://github.com/koodo-reader/plugins/blob/main/README.md"
-                  );
-                }
-              }}
-            >
-              <Trans>How to custom plugin</Trans>
-            </span>
-            <span
-              style={{ marginLeft: "20px", fontWeight: "bold" }}
-              onClick={async () => {
-                this.handleOpenAddNew(true);
-              }}
-            >
-              <Trans>Add custom plugin</Trans>
-            </span>
-          </div>
-        )}
+        <div className="setting-dialog-new-plugin">
+          <span
+            style={{ textDecoration: "underline", marginRight: "20px" }}
+            onClick={() => {
+              openExternalUrl(this.getPluginTutorialUrl());
+            }}
+          >
+            <Trans>Visit online version</Trans>
+          </span>
+          <span
+            style={{ textDecoration: "underline" }}
+            onClick={() => {
+              if (
+                ConfigService.getReaderConfig("lang") &&
+                ConfigService.getReaderConfig("lang").startsWith("zh")
+              ) {
+                openExternalUrl(
+                  "https://github.com/koodo-reader/plugins/blob/main/README_CN.md"
+                );
+              } else {
+                openExternalUrl(
+                  "https://github.com/koodo-reader/plugins/blob/main/README.md"
+                );
+              }
+            }}
+          >
+            <Trans>How to custom plugin</Trans>
+          </span>
+          <span
+            style={{ marginLeft: "20px", fontWeight: "bold" }}
+            onClick={async () => {
+              const infoEl = document.querySelector(".setting-dialog-info");
+              this.setState({ isAddNew: true }, () => {
+                if (infoEl) infoEl.scrollTop = 0;
+              });
+            }}
+          >
+            <Trans>Add custom plugin</Trans>
+          </span>
+        </div>
       </>
     );
   }

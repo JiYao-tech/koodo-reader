@@ -7,7 +7,6 @@ import Lottie from "lottie-react";
 import animationNew from "../../../assets/lotties/new.json";
 import {
   compareVersions,
-  getWebsiteLang,
   getWebsiteUrl,
   openExternalUrl,
 } from "../../../utils/common";
@@ -209,9 +208,17 @@ class UpdateInfo extends React.Component<UpdateInfoProps, UpdateInfoState> {
                         }, 500);
                       }
                     } else {
+                      let lang = "en";
+                      if (
+                        ConfigService.getReaderConfig("lang") &&
+                        ConfigService.getReaderConfig("lang").startsWith("zh")
+                      ) {
+                        lang = "zh";
+                      }
                       openExternalUrl(
                         getWebsiteUrl() +
-                          getWebsiteLang() +
+                          "/" +
+                          lang +
                           "/download" +
                           "?version=" +
                           (this.state.updateLog.stable === "yes"
@@ -232,9 +239,17 @@ class UpdateInfo extends React.Component<UpdateInfoProps, UpdateInfoState> {
                 <div
                   className="new-version-skip"
                   onClick={() => {
+                    let lang = "en";
+                    if (
+                      ConfigService.getReaderConfig("lang") &&
+                      ConfigService.getReaderConfig("lang").startsWith("zh")
+                    ) {
+                      lang = "zh";
+                    }
                     openExternalUrl(
                       getWebsiteUrl() +
-                        getWebsiteLang() +
+                        "/" +
+                        lang +
                         "/download" +
                         "?version=" +
                         (this.state.updateLog.stable === "yes"

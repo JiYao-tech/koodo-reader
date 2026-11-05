@@ -66,13 +66,7 @@ export const calculateFileMD5 = (file: File): Promise<string> => {
       // Use the file path to compute md5 via streaming, avoid loading the
       // whole file into memory with FileReader.
       const filePath = (file as any).path;
-      // Only use disk-path fast path when the file actually exists on disk
-      // (file.path may also carry a virtual/cloud path).
-      if (
-        filePath &&
-        window.electronAPI?.crypto?.fileMd5 &&
-        window.electronAPI.fs.existsSync(filePath)
-      ) {
+      if (filePath && window.electronAPI?.crypto?.fileMd5) {
         window.electronAPI.crypto
           .fileMd5(filePath)
           .then(resolve)
@@ -189,7 +183,11 @@ export const confirmBrowserExtensionAsync = async (): Promise<boolean> => {
     "Install extension"
   );
   if (!result) {
-    openExternalUrl(getWebsiteUrl() + getWebsiteLang() + "/use-extension");
+    const lang = ConfigService.getReaderConfig("lang");
+    openExternalUrl(
+      getWebsiteUrl() +
+        (lang?.startsWith("zh") ? "/zh/use-extension" : "/en/use-extension")
+    );
     return false;
   }
   return true;
@@ -374,14 +372,6 @@ export const vexPasswordInputAsync = (
   });
 };
 
-export const REPORT_REASONS = [
-  "Inaccurate or misleading information",
-  "Inappropriate or offensive content",
-  "Irrelevant or off-topic response",
-  "Privacy concern",
-  "Other",
-];
-
 export const vexSelectAsync = (
   message: string,
   options: { value: string; label: string }[]
@@ -502,9 +492,7 @@ export function throttle<T extends (...args: any[]) => void>(
 export const scrollContents = (chapterTitle: string, chapterHref: string) => {
   let contentBody = document.getElementsByClassName("navigation-body")[0];
   if (!contentBody) return;
-  let contentList = contentBody.getElementsByClassName(
-    "book-content-title-label"
-  );
+  let contentList = contentBody.getElementsByClassName("book-content-name");
   let targetContent = Array.from(contentList).filter((item) => {
     item.setAttribute("style", "");
     let dataHref = (item as any).getAttribute("data-href");
@@ -699,6 +687,13 @@ export function removeSearchParams() {
   const url = new URL(window.location.href.split("?")[0]);
   window.history.replaceState({}, document.title, url.toString());
 }
+export const getChatLocale = () => {
+  if (navigator.language.startsWith("zh")) {
+    return "zh_CN";
+  } else {
+    return "en";
+  }
+};
 export const preCacheAllBooks = async (bookList: Book[]) => {
   for (let index = 0; index < bookList.length; index++) {
     const selectedBook = bookList[index];
@@ -904,19 +899,8 @@ export const getDefaultTransTarget = (langList) => {
   );
   return langMap[langTarget || "English"];
 };
-export const WEBSITE_URL = "https://koodoreader.com/";
-export const CN_WEBSITE_URL = "https://koodoreader.cn/";
-export const WEBSITE_LANGS = [
-  "zh",
-  "en",
-  "ja",
-  "ko",
-  "fr",
-  "de",
-  "es",
-  "pt",
-  "ru",
-];
+export const WEBSITE_URL = "https://koodoreader.com";
+export const CN_WEBSITE_URL = "https://koodoreader.cn";
 export const getServerRegion = () => {
   let isUseCN = false;
   if (ConfigService.getItem("serverRegion")) {
@@ -934,10 +918,6 @@ export const getServerRegion = () => {
 };
 export const getWebsiteUrl = () => {
   return getServerRegion() === "china" ? CN_WEBSITE_URL : WEBSITE_URL;
-};
-export const getWebsiteLang = () => {
-  const lang = ConfigService.getReaderConfig("lang") || "en";
-  return WEBSITE_LANGS.find((code) => lang.startsWith(code)) || "en";
 };
 export const formatTimestamp = (timestamp) => {
   if (!timestamp) return "";
@@ -1586,15 +1566,10 @@ export const splitSentences = (text: string, maxLength?: number) => {
     if (sentence.length <= resolvedMaxLength) return [sentence];
 
     // Try splitting by common punctuation marks (Chinese and Western)
-    // Avoid lookbehind (?<=) which is unsupported on low-version iOS Safari
-    const rawParts = sentence.split(/([,，;；:：、…])/);
-    const parts = [] as string[];
-    for (let i = 0; i < rawParts.length; i += 2) {
-      const merged = (rawParts[i] + (rawParts[i + 1] ?? "")).trim();
-      if (merged.length > 0) {
-        parts.push(merged);
-      }
-    }
+    const parts = sentence
+      .split(/(?<=[,，;；:：、…])/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
 
     if (parts.length > 1) {
       // Greedily merge parts to minimize the number of resulting chunks
@@ -1735,10 +1710,6 @@ export const prepareThirdConfig = async (service: string, config: any) => {
     // Get access token
     let refreshToken = config.refresh_token;
     let res = await refreshThirdToken(service, refreshToken);
-    //网络问题不移除数据源
-    if (res && res.code === 503) {
-      return {};
-    }
     if (!res.data || !res.data.access_token) {
       toast.error(
         i18n.t(
@@ -1940,10 +1911,6 @@ export const BRUSH_COLORS = [
 ];
 
 export const BRUSH_WIDTHS = [2, 4, 8, 14];
-export const ERASER_WIDTH_MIN = 6;
-export const ERASER_WIDTH_MAX = 60;
-export const ERASER_WIDTH_STEP = 2;
-export const ERASER_WIDTH_DEFAULT = 24;
 export const HIGHLIGHTER_COLORS = [
   "#FFE54C",
   "#6FFB6B",
@@ -2177,156 +2144,4 @@ export const scanFolderForNewBooks = async (
     }
   }
   return imported;
-};
-
-export const getTarEntries = async (
-  filePath: string
-): Promise<{ entryPath: string; size: number; fileName: string }[]> => {
-  if (!isElectron) {
-    throw new Error("getTarEntries is only supported in Electron");
-  }
-  return await window.electronAPI.invoke("list-tar-file", { filePath });
-};
-export const getZipEntries = async (
-  filePath: string
-): Promise<{ entryPath: string; size: number; fileName: string }[]> => {
-  if (!isElectron) {
-    throw new Error("getZipEntries is only supported in Electron");
-  }
-  return await window.electronAPI.invoke("list-zip-file", { filePath });
-};
-export const clearComicTemp = () => {
-  try {
-    const fs = window.electronAPI.fs;
-    const path = window.electronAPI.path;
-    const base = path.join(path.dirname(getStorageLocation() || ""), "comic");
-    if (fs.existsSync(base)) {
-      fs.rmSync(base, { recursive: true, force: true });
-    }
-  } catch (e) {
-    console.error("clear comic temp error", e);
-  }
-};
-const readArchiveBuffer = async (
-  channel: string,
-  entryPath: string,
-  filePath: string
-): Promise<ArrayBuffer> => {
-  const extracted: string[] = await window.electronAPI.invoke(channel, {
-    filePath,
-    entries: [entryPath],
-  });
-  const extractedPath =
-    Array.isArray(extracted) && extracted.length > 0 ? extracted[0] : "";
-  if (!extractedPath) {
-    throw new Error("Failed to extract archive entry");
-  }
-  const fs = window.electronAPI.fs;
-  const buf: Buffer = fs.readFileSync(extractedPath);
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-};
-export const getTarBuffer = async (
-  entryPath: string,
-  filePath: string
-): Promise<ArrayBuffer> => {
-  if (!isElectron) {
-    throw new Error("getTarBuffer is only supported in Electron");
-  }
-  return readArchiveBuffer("untar-file", entryPath, filePath);
-};
-export const getZipBuffer = async (
-  entryPath: string,
-  filePath: string
-): Promise<ArrayBuffer> => {
-  if (!isElectron) {
-    throw new Error("getZipBuffer is only supported in Electron");
-  }
-  return readArchiveBuffer("unzip-file", entryPath, filePath);
-};
-export const isReadingAidMode = (format: string, bookKey: string) => {
-  let isReadingRawPDF =
-    format === "PDF" &&
-    !ConfigService.getAllListConfig("convertPDFBooks").includes(bookKey);
-  return (
-    (ConfigService.getReaderConfig("isParagraphMode") === "yes" ||
-      ConfigService.getReaderConfig("isSpeedReading") === "yes" ||
-      ConfigService.getReaderConfig("isReadingRuler") === "yes") &&
-    !isReadingRawPDF
-  );
-};
-export const getOfficialDictLang = () => {
-  const lang = ConfigService.getReaderConfig("lang");
-  if (lang.startsWith("zh")) {
-    return "chs";
-  } else if (lang.startsWith("ja")) {
-    return "jpn";
-  } else if (lang.startsWith("ko")) {
-    return "kor";
-  } else if (lang.startsWith("fr")) {
-    return "fra";
-  } else if (lang.startsWith("de")) {
-    return "deu";
-  } else if (lang.startsWith("es")) {
-    return "spa";
-  } else if (lang.startsWith("pt")) {
-    return "por";
-  } else {
-    return "eng";
-  }
-};
-export const getOcrCachePath = (
-  bookKey: string,
-  chapterDocIndex: string
-): string => {
-  const electron = window.electronAPI;
-  const dirPath = electron.sendSync("user-data", "ping");
-  const ocrDir = electron.path.join(dirPath, "ocr");
-  if (!electron.fs.existsSync(ocrDir)) {
-    electron.fs.mkdirSync(ocrDir, { recursive: true });
-  }
-  return electron.path.join(ocrDir, bookKey + "_" + chapterDocIndex + ".json");
-};
-export const isReadingRawPDF = (book: Book) => {
-  return (
-    book.format === "PDF" &&
-    !ConfigService.getAllListConfig("convertPDFBooks").includes(book.key)
-  );
-};
-export const getOcrCache = (bookKey: string, chapterDocIndex: string) => {
-  if (!isElectron || !window.electronAPI || !window.electronAPI.fs) {
-    return null;
-  }
-  let cache = null;
-  if (isElectron && window.electronAPI && window.electronAPI.fs) {
-    try {
-      const cachePath = getOcrCachePath(bookKey, chapterDocIndex);
-      const fs = window.electronAPI.fs;
-      if (fs.existsSync(cachePath)) {
-        cache = JSON.parse(fs.readFileSync(cachePath, "utf-8")) || {};
-      }
-    } catch (error) {
-      console.error("Failed to load ocr cache:", error);
-    }
-  }
-  return cache;
-};
-
-export const saveOcrCache = (
-  bookKey: string,
-  chapterDocIndex: string,
-  cache: { src: string }
-) => {
-  if (!isElectron || !window.electronAPI || !window.electronAPI.fs) {
-    return;
-  }
-  try {
-    const cachePath = getOcrCachePath(bookKey, chapterDocIndex);
-    window.electronAPI.fs.writeFileSync(
-      cachePath,
-      JSON.stringify(cache),
-      "utf-8"
-    );
-  } catch (error) {
-    console.error("Failed to save ocr cache:", error);
-  }
 };

@@ -21,5 +21,4 @@ export interface ContentListState {
   isSearchOpen: boolean;
   searchKeyword: string;
   isComposing: boolean;
-  chapterPages: number[];
 }

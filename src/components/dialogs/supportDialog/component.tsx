@@ -7,7 +7,6 @@ import supportAnimation from "../../../assets/lotties/support.json";
 import exitAnimation from "../../../assets/lotties/exit.json";
 import {
   getServerRegion,
-  getWebsiteLang,
   getWebsiteUrl,
   handleContextMenu,
   openInBrowser,
@@ -21,7 +20,6 @@ import {
   getUserRequest,
 } from "../../../utils/request/user";
 import TokenService from "../../../utils/storage/tokenService";
-import { proFeatures } from "../../../constants/loginList";
 class SupportDialog extends React.Component<
   SupportDialogProps,
   SupportDialogState
@@ -116,9 +114,41 @@ class SupportDialog extends React.Component<
                       )}
                     </p>
                     <ul className="support-dialog-benefit-list">
-                      {proFeatures.map((feature, index) => (
-                        <li key={index}>{this.props.t(feature)}</li>
-                      ))}
+                      <li>
+                        {this.props.t(
+                          "Cross-platform data sync (cloud drives, WebDAV, Docker, object storage)"
+                        )}
+                      </li>
+                      <li>
+                        {this.props.t(
+                          "Import books from cloud drives (Baidu Netdisk, Google Drive, WebDAV, FTP, SMB)"
+                        )}
+                      </li>
+                      <li>
+                        {this.props.t("Official translation in 90+ languages")}
+                      </li>
+                      <li>
+                        {this.props.t(
+                          "Official dictionary with definitions, examples & pronunciation"
+                        )}
+                      </li>
+                      <li>
+                        {this.props.t(
+                          "AI reading aids (chapter summaries, outline, multi-role narration)"
+                        )}
+                      </li>
+                      <li>
+                        {this.props.t(
+                          "Natural text-to-speech (82 languages, 569 voices)"
+                        )}
+                      </li>
+                      <li>
+                        {this.props.t("OCR text recognition for scanned PDFs")}
+                      </li>
+                      <li>{this.props.t("Send to Kindle")}</li>
+                      <li>
+                        {this.props.t("Email & live-chat priority support")}
+                      </li>
                     </ul>
                   </div>
                 </>
@@ -365,7 +395,13 @@ class SupportDialog extends React.Component<
                               let deviceUuid =
                                 await TokenService.getFingerprint();
                               openInBrowser(
-                                getWebsiteUrl() + getWebsiteLang() + "/pricing?temp_token=" +
+                                getWebsiteUrl() +
+                                  (ConfigService.getReaderConfig(
+                                    "lang"
+                                  ).startsWith("zh")
+                                    ? "/zh"
+                                    : "/en") +
+                                  "/pricing?temp_token=" +
                                   tempToken +
                                   "&device_uuid=" +
                                   deviceUuid

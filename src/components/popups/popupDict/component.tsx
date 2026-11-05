@@ -13,7 +13,6 @@ import DictHistory from "../../../models/DictHistory";
 import { Trans } from "react-i18next";
 import {
   getFullTranslationTarget,
-  getOfficialDictLang,
   getWebsiteUrl,
   openExternalUrl,
 } from "../../../utils/common";
@@ -50,7 +49,6 @@ class PopupDict extends React.Component<PopupDictProps, PopupDictState> {
       isShowUrl: false,
       aiAnswer: "",
       isAiWaiting: false,
-      isAiStreaming: false,
     };
   }
 
@@ -163,7 +161,7 @@ class PopupDict extends React.Component<PopupDictProps, PopupDictState> {
         systemPrompt = systemPrompt.replace("{to}", targetLang);
         let config: any = plugin.config || {};
         this.aiTextAccumulator = "";
-        this.setState({ aiAnswer: "", isAiWaiting: true, isAiStreaming: true });
+        this.setState({ aiAnswer: "", isAiWaiting: true });
         this.startUpdateInterval();
         await chatStream(
           config.endpoint,
@@ -186,11 +184,7 @@ class PopupDict extends React.Component<PopupDictProps, PopupDictState> {
         );
         this.stopUpdateInterval();
         this.aiTextAccumulator = "";
-        this.setState({
-          isAiWaiting: false,
-          isAiStreaming: false,
-          dictText: " ",
-        });
+        this.setState({ isAiWaiting: false, dictText: " " });
         return "";
       } else if (
         ConfigService.getReaderConfig("dictService") &&
@@ -214,7 +208,10 @@ class PopupDict extends React.Component<PopupDictProps, PopupDictState> {
         dictText = await getDictText(
           text,
           ConfigService.getReaderConfig("dictTarget") || "auto",
-          getOfficialDictLang()
+          ConfigService.getReaderConfig("lang") &&
+            ConfigService.getReaderConfig("lang").startsWith("zh")
+            ? "chs"
+            : "eng"
         );
         if (dictText) {
           isFullAnalysis = false;
@@ -260,12 +257,6 @@ class PopupDict extends React.Component<PopupDictProps, PopupDictState> {
             dictText: dictText,
           },
           () => {
-            const audioPlayers = document.querySelectorAll(
-              "audio.audio-player"
-            );
-            audioPlayers.forEach((item) => {
-              (item as HTMLAudioElement).load();
-            });
             let moreElement = document.querySelector(".dict-learn-more");
             if (moreElement) {
               moreElement.addEventListener("click", () => {
@@ -293,7 +284,6 @@ class PopupDict extends React.Component<PopupDictProps, PopupDictState> {
       console.error(error);
       this.setState({
         dictText: this.props.t("Error happened"),
-        isAiStreaming: false,
       });
       return "";
     }
@@ -301,7 +291,7 @@ class PopupDict extends React.Component<PopupDictProps, PopupDictState> {
   handleDictionaryStream = async (text: string, isFullAnalysis: boolean) => {
     try {
       this.aiTextAccumulator = "";
-      this.setState({ aiAnswer: "", isAiWaiting: true, isAiStreaming: true });
+      this.setState({ aiAnswer: "", isAiWaiting: true });
       this.startUpdateInterval();
       let res = await getDictionaryStream(
         text,
@@ -321,12 +311,12 @@ class PopupDict extends React.Component<PopupDictProps, PopupDictState> {
       this.stopUpdateInterval();
       this.aiTextAccumulator = "";
       if (res && res.done) {
-        this.setState({ isAiWaiting: false, isAiStreaming: false });
+        this.setState({ isAiWaiting: false });
       }
     } catch (error) {
       this.stopUpdateInterval();
       this.aiTextAccumulator = "";
-      this.setState({ isAiWaiting: false, isAiStreaming: false });
+      this.setState({ isAiWaiting: false });
       console.error(error);
     }
   };
@@ -540,15 +530,6 @@ class PopupDict extends React.Component<PopupDictProps, PopupDictState> {
                         {
                           replace: (_domNode) => {},
                         }
-                      )}
-                    </div>
-                  )}
-                  {!this.state.isAiWaiting &&
-                    !this.state.isAiStreaming &&
-                    this.state.aiAnswer && (
-                    <div className="popup-assist-disclaimer">
-                      {this.props.t(
-                        "AI-generated content is for reference only. Please verify carefully as it does not constitute professional advice."
                       )}
                     </div>
                   )}

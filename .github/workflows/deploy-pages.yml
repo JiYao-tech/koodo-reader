@@ -1,0 +1,97 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "github-pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "yarn"
+
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 1000000
+
+      - name: Build React app
+        run: yarn build
+        env:
+          PUBLIC_URL: ${{ steps.pages.outputs.base_path }}
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      # 静态资源自检：public/lib 必须真的进了产物。
+      # 缺失时 pdf.js 会把 index.html 的 HTML 当成 CSS 注入，导致样式错乱而不报错。
+      - name: Verify bundled pdfjs assets
+        run: |
+          set -euo pipefail
+          test -f build/lib/pdfjs/text_layer_builder.css
+          test -f build/lib/pdfjs/annotation_layer_builder.css
+          test -f build/lib/pdfjs/pdf.worker.mjs
+          cmaps=$(ls build/lib/pdfjs/cmaps | wc -l)
+          echo "cmaps: $cmaps"
+          test "$cmaps" -gt 100
+
+      # 运行时资源路径修正（只改构建产物，不改源码，避免与 upstream 同步冲突）。
+      # 上游 src/assets/lib/kookit.min.js 在运行时拼 `${isElectron?".":""}/lib/pdfjs/${x}`，
+      # 浏览器下即 `/lib/pdfjs/...`（域名根绝对路径）。站点部署在 /<repo>/ 子路径时必然 404。
+      # 这里给产物里的该路径补上站点前缀；部署到根路径时（base_path 为空）自动跳过。
+      - name: Rewrite runtime asset paths for sub-path hosting
+        if: steps.pages.outputs.base_path != ''
+        env:
+          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: |
+          set -euo pipefail
+          files=$(grep -rl -e '/lib/pdfjs/' -e '/lib/tesseractjs/' build/static/js || true)
+          if [ -z "$files" ]; then
+            echo "::error::未在产物中找到 /lib/pdfjs/ 运行时路径，上游实现可能已变更，请复查补丁逻辑"
+            exit 1
+          fi
+          echo "$files" | xargs sed -i \
+            -e "s#/lib/pdfjs/#${BASE_PATH}/lib/pdfjs/#g" \
+            -e "s#/lib/tesseractjs/#${BASE_PATH}/lib/tesseractjs/#g"
+          all=$(grep -ro "/lib/pdfjs/" build/static/js | wc -l || true)
+          ok=$(grep -ro "${BASE_PATH}/lib/pdfjs/" build/static/js | wc -l || true)
+          echo "pdfjs runtime paths prefixed: $ok/$all"
+          test "$all" -ge 1
+          test "$all" -eq "$ok"
+          tess_all=$(grep -ro "/lib/tesseractjs/" build/static/js | wc -l || true)
+          tess_ok=$(grep -ro "${BASE_PATH}/lib/tesseractjs/" build/static/js | wc -l || true)
+          echo "tesseract runtime paths prefixed: $tess_ok/$tess_all"
+          test "$tess_all" -eq "$tess_ok"
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

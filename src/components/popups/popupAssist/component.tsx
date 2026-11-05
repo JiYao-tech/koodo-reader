@@ -8,15 +8,11 @@ import {
 import Parser from "html-react-parser";
 import DOMPurify from "dompurify";
 import { Trans } from "react-i18next";
-import {
-  handleContextMenu,
-  REPORT_REASONS,
-  vexSelectAsync,
-} from "../../../utils/common";
+import { handleContextMenu } from "../../../utils/common";
 import toast from "react-hot-toast";
 import { saveAs } from "file-saver";
 import { getAnswerStream } from "../../../utils/request/reader";
-import { chatStream, llmReport } from "../../../utils/request/common";
+import { chatStream } from "../../../utils/request/common";
 import { marked } from "marked";
 import { sampleQuestion } from "../../../constants/settingList";
 class PopupAssist extends React.Component<PopupAssistProps, PopupAssistState> {
@@ -164,10 +160,7 @@ class PopupAssist extends React.Component<PopupAssistProps, PopupAssistState> {
           aiService: "official-ai-assistant-plugin",
           isAddNew: false,
         });
-        ConfigService.setReaderConfig(
-          "aiService",
-          "official-ai-assistant-plugin"
-        );
+        ConfigService.setReaderConfig("aiService", "official-ai-assistant-plugin");
       } else {
         this.setState({
           isAddNew: true,
@@ -265,8 +258,7 @@ class PopupAssist extends React.Component<PopupAssistProps, PopupAssistState> {
     try {
       if (
         ConfigService.getReaderConfig("aiService") &&
-        ConfigService.getReaderConfig("aiService") ===
-          "custom-ai-assistant-plugin"
+        ConfigService.getReaderConfig("aiService") === "custom-ai-assistant-plugin"
       ) {
         let plugin = this.props.plugins.find(
           (item) => item.key === "custom-ai-assistant-plugin"
@@ -344,8 +336,7 @@ class PopupAssist extends React.Component<PopupAssistProps, PopupAssistState> {
         }
       } else if (
         ConfigService.getReaderConfig("aiService") &&
-        ConfigService.getReaderConfig("aiService") !==
-          "official-ai-assistant-plugin"
+        ConfigService.getReaderConfig("aiService") !== "official-ai-assistant-plugin"
       ) {
       } else if (this.props.isAuthed) {
         let plugin = this.props.plugins.find(
@@ -421,7 +412,10 @@ class PopupAssist extends React.Component<PopupAssistProps, PopupAssistState> {
     }
   };
   handleChangeAiService = (aiService: string) => {
-    if (aiService === "official-ai-assistant-plugin" && !this.props.isAuthed) {
+    if (
+      aiService === "official-ai-assistant-plugin" &&
+      !this.props.isAuthed
+    ) {
       toast(this.props.t("Please upgrade to Pro to use this feature"));
       this.props.handleSetting(true);
       this.props.handleSettingMode("account");
@@ -448,39 +442,6 @@ class PopupAssist extends React.Component<PopupAssistProps, PopupAssistState> {
       toast.success(this.props.t("Copied"));
     });
   };
-  handleReportAnswer = async (content: string, index: number) => {
-    const history =
-      this.state.mode === "ask"
-        ? this.state.askHistory
-        : this.state.chatHistory;
-    const userMessage = history
-      .slice(0, index)
-      .reverse()
-      .find((item) => item.role === "user");
-    const reason = await vexSelectAsync(
-      "Report reason",
-      REPORT_REASONS.map((item) => ({ value: item, label: item }))
-    );
-    if (!reason) {
-      return;
-    }
-    toast.loading(this.props.t("Please wait"), { id: "report-feedback" });
-    try {
-      await llmReport({
-        answer: content,
-        question: userMessage?.content || "",
-        reason: this.props.t(reason),
-        user_id: (this.props.userInfo?.time_created || "") + "" || "anonymous",
-      });
-      toast.success(this.props.t("Thank you for your feedback"), {
-        id: "report-feedback",
-      });
-    } catch (error) {
-      toast.success(this.props.t("Thank you for your feedback"), {
-        id: "report-feedback",
-      });
-    }
-  };
   handleRenderHistoryMessage = (message: any[]) => {
     return message.map((item, index) => {
       return (
@@ -506,21 +467,6 @@ class PopupAssist extends React.Component<PopupAssistProps, PopupAssistState> {
               onClick={() => this.handleCopyAnswer(item.content)}
             >
               <span className="icon-copy-line"></span>
-            </div>
-          )}
-          {item.role === "assistant" && (
-            <div
-              className="popup-assist-copy-button popup-assist-report-button"
-              onClick={() => this.handleReportAnswer(item.content, index)}
-            >
-              <span className="icon-report" style={{ fontWeight: 500 }}></span>
-            </div>
-          )}
-          {item.role === "assistant" && index === message.length - 1 && (
-            <div className="popup-assist-disclaimer">
-              {this.props.t(
-                "AI-generated content is for reference only. Please verify carefully as it does not constitute professional advice."
-              )}
             </div>
           )}
         </div>
@@ -570,19 +516,6 @@ class PopupAssist extends React.Component<PopupAssistProps, PopupAssistState> {
     } else {
       this.setState({ chatHistory: [] });
     }
-  };
-  handleSendQuestion = () => {
-    if (this.state.answer || this.state.isWaiting) {
-      return;
-    }
-    this.handleNewQuestion(this.state.inputQuestion);
-    this.setState({ inputQuestion: "" }, () => {
-      const el = this.textareaRef.current;
-      if (el) {
-        el.style.height = "40px";
-        el.style.overflowY = "hidden";
-      }
-    });
   };
   handleNewQuestion = (question: string) => {
     if (this.state.mode === "ask") {
@@ -646,12 +579,8 @@ class PopupAssist extends React.Component<PopupAssistProps, PopupAssistState> {
             style={{
               display: "flex",
               alignItems: "center",
-              justifyContent: this.props.isDockedRight
-                ? "space-between"
-                : "flex-start",
+              justifyContent: "flex-start",
               flexShrink: 0,
-              width: this.props.isDockedRight ? "100%" : undefined,
-              marginTop: this.props.isDockedRight ? "10px" : "0px",
             }}
           >
             <div
@@ -663,7 +592,6 @@ class PopupAssist extends React.Component<PopupAssistProps, PopupAssistState> {
               onClick={() => {
                 this.setState({ isAddNew: false, mode: "ask" });
               }}
-              style={{ width: this.props.isDockedRight ? "50%" : undefined }}
             >
               <span className={`icon-bookmark trans-icon`}></span>
               {this.props.t("Reading Assistant")}
@@ -677,10 +605,6 @@ class PopupAssist extends React.Component<PopupAssistProps, PopupAssistState> {
               onClick={() => {
                 this.setState({ isAddNew: false, mode: "chat" });
               }}
-              style={{
-                width: this.props.isDockedRight ? "50%" : undefined,
-                marginRight: this.props.isDockedRight ? "0px" : "10px",
-              }}
             >
               <span className={`icon-idea trans-icon`}></span>
               {this.props.t("Chat Assistant")}
@@ -692,46 +616,34 @@ class PopupAssist extends React.Component<PopupAssistProps, PopupAssistState> {
               display: "flex",
               alignItems: "center",
               gap: "8px",
-              width: this.props.isDockedRight ? "100%" : undefined,
-              justifyContent: this.props.isDockedRight
-                ? "space-between"
-                : undefined,
-              marginTop: this.props.isDockedRight ? "10px" : "0px",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <div
-                className="popup-assist-export-button"
-                style={{ fontSize: 18 }}
-                onClick={this.handleDeleteChatHistory}
+            <div
+              className="popup-assist-export-button"
+              style={{ fontSize: 18 }}
+              onClick={this.handleDeleteChatHistory}
+            >
+              <span
+                data-tooltip-id="my-tooltip"
+                data-tooltip-content={this.props.t("Clear chat history")}
               >
-                <span
-                  data-tooltip-id="my-tooltip"
-                  data-tooltip-content={this.props.t("Clear chat history")}
-                >
-                  <span className="icon-trash-line"></span>
-                </span>
-              </div>
-              <div
-                className="popup-assist-export-button"
-                onClick={this.handleExportChatHistory}
-              >
-                <span
-                  data-tooltip-id="my-tooltip"
-                  data-tooltip-content={this.props.t("Export chat history")}
-                >
-                  <span className="icon-share"></span>
-                </span>
-              </div>
+                <span className="icon-trash-line"></span>
+              </span>
             </div>
-
+            <div
+              className="popup-assist-export-button"
+              onClick={this.handleExportChatHistory}
+            >
+              <span
+                data-tooltip-id="my-tooltip"
+                data-tooltip-content={this.props.t("Export chat history")}
+              >
+                <span className="icon-share"></span>
+              </span>
+            </div>
             <select
               className="dict-service-selector"
-              style={{
-                margin: 0,
-                color: "#f16464",
-                width: "150px",
-              }}
+              style={{ margin: 0, color: "#f16464" }}
               value={this.state.aiService}
               onChange={(event: React.ChangeEvent<HTMLSelectElement>) => {
                 if (event.target.value === "add-new") {
@@ -928,18 +840,6 @@ class PopupAssist extends React.Component<PopupAssistProps, PopupAssistState> {
                       marginRight: "10px",
                       marginBottom: "0px",
                     }}
-                    onKeyDown={(
-                      event: React.KeyboardEvent<HTMLTextAreaElement>
-                    ) => {
-                      if (
-                        event.key === "Enter" &&
-                        (event.ctrlKey || event.metaKey) &&
-                        !(event.nativeEvent as any).isComposing
-                      ) {
-                        event.preventDefault();
-                        this.handleSendQuestion();
-                      }
-                    }}
                     onContextMenu={() => {
                       handleContextMenu("trans-add-content-box");
                     }}
@@ -957,7 +857,19 @@ class PopupAssist extends React.Component<PopupAssistProps, PopupAssistState> {
                   />
                   <div
                     className="popup-assistant-send-button"
-                    onClick={this.handleSendQuestion}
+                    onClick={() => {
+                      if (this.state.answer || this.state.isWaiting) {
+                        return;
+                      }
+                      this.handleNewQuestion(this.state.inputQuestion);
+                      this.setState({ inputQuestion: "" }, () => {
+                        const el = this.textareaRef.current;
+                        if (el) {
+                          el.style.height = "40px";
+                          el.style.overflowY = "hidden";
+                        }
+                      });
+                    }}
                   >
                     {this.props.t("Send")}
                   </div>

@@ -80,7 +80,12 @@ export const dropdownList = [
     option: [{ label: "Built-in font", value: "Built-in font" }],
     isPDF: false,
   },
-
+  {
+    title: "CJK font family",
+    value: "subFontFamily",
+    option: [{ label: "Built-in font", value: "Built-in font" }],
+    isPDF: false,
+  },
   {
     title: "Line height",
     value: "lineHeight",
@@ -183,12 +188,6 @@ export const dropdownList = [
         value: "target",
       },
     ],
-    isPDF: false,
-  },
-  {
-    title: "CJK font family",
-    value: "subFontFamily",
-    option: [{ label: "Built-in font", value: "Built-in font" }],
     isPDF: false,
   },
 ];

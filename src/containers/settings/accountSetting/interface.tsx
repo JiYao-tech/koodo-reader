@@ -34,7 +34,6 @@ export interface SettingInfoState {
   loginConfig: any;
   settingLogin: string;
   serverRegion: string;
-  showLoginOptions: boolean;
   isSendingCode: boolean;
   countdown: number;
 }

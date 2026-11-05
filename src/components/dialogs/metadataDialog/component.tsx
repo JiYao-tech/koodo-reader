@@ -1,8 +1,6 @@
 import React from "react";
 import "./metadataDialog.css";
 import { Trans } from "react-i18next";
-import Parser from "html-react-parser";
-import DOMPurify from "dompurify";
 import {
   MetadataDialogProps,
   MetadataDialogState,
@@ -10,7 +8,6 @@ import {
   BookResultItem,
 } from "./interface";
 import toast from "react-hot-toast";
-import copy from "copy-text-to-clipboard";
 import { getBookMetadata } from "../../../utils/request/reader";
 
 class MetadataDialog extends React.Component<
@@ -174,16 +171,7 @@ class MetadataDialog extends React.Component<
               const author = item.author;
               const publisher = item.publisher || "";
               const description = item.description || "";
-              const ratingSource = item.rating_source || "";
-              const rating = item.rating || 0;
-              const ratingCount = item.rating_count || 0;
-              const maxRating = ratingSource === "Douban" ? 10 : 5;
-              const filledStars = Math.max(
-                0,
-                Math.round((rating / maxRating) * 5)
-              );
-              const stars =
-                "★".repeat(filledStars) + "☆".repeat(5 - filledStars);
+              const source = "Cloud";
               return (
                 <div
                   key={id}
@@ -203,89 +191,24 @@ class MetadataDialog extends React.Component<
                     <div className="metadata-book-basic">
                       <div className="metadata-book-name">{title}</div>
                       <div className="metadata-book-author">{author}</div>
-                      {publisher && (
-                        <div className="metadata-book-publisher">
-                          {publisher}
-                        </div>
-                      )}
-                      {item.rating ? (
-                        <div className="metadata-book-rating">
-                          <span className="metadata-book-rating-stars">
-                            {stars}
-                          </span>
-                          <span className="metadata-book-rating-value">
-                            {rating.toFixed(1)} / {maxRating}
-                          </span>
-                          {ratingCount > 0 && (
-                            <span className="metadata-book-rating-count">
-                              ({ratingCount})
-                            </span>
-                          )}
-                        </div>
-                      ) : null}
+                      <div className="metadata-book-source">
+                        {this.props.t("Data source") +
+                          ": " +
+                          this.props.t(source)}
+                      </div>
                     </div>
                   </div>
 
                   {/* Expanded detail */}
                   {isSelected && (
                     <div className="metadata-book-detail">
-                      {item.isbn && (
+                      {publisher && (
                         <div className="metadata-book-detail-row">
                           <span className="metadata-book-detail-label">
-                            <Trans>ISBN</Trans>:
-                          </span>
-                          <span className="metadata-book-detail-value metadata-book-detail-isbn">
-                            {item.isbn}
-                          </span>
-                          <button
-                            className="metadata-book-copy-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              copy(item.isbn || "");
-                              toast(this.props.t("Copying successful"));
-                            }}
-                          >
-                            <span className="icon-copy"></span>
-                          </button>
-                        </div>
-                      )}
-                      {item.pub_date && (
-                        <div className="metadata-book-detail-row">
-                          <span className="metadata-book-detail-label">
-                            <Trans>Publish date</Trans>:
+                            <Trans>Publisher</Trans>:
                           </span>
                           <span className="metadata-book-detail-value">
-                            {item.pub_date}
-                          </span>
-                        </div>
-                      )}
-                      {item.categories && (
-                        <div className="metadata-book-detail-row">
-                          <span className="metadata-book-detail-label">
-                            <Trans>Categories</Trans>:
-                          </span>
-                          <span className="metadata-book-detail-value">
-                            {item.categories}
-                          </span>
-                        </div>
-                      )}
-                      {item.language && (
-                        <div className="metadata-book-detail-row">
-                          <span className="metadata-book-detail-label">
-                            <Trans>Language</Trans>:
-                          </span>
-                          <span className="metadata-book-detail-value">
-                            {item.language}
-                          </span>
-                        </div>
-                      )}
-                      {item.pages && (
-                        <div className="metadata-book-detail-row">
-                          <span className="metadata-book-detail-label">
-                            <Trans>Pages</Trans>:
-                          </span>
-                          <span className="metadata-book-detail-value">
-                            {item.pages}
+                            {publisher}
                           </span>
                         </div>
                       )}
@@ -295,7 +218,7 @@ class MetadataDialog extends React.Component<
                             <Trans>Description</Trans>:
                           </span>
                           <span className="metadata-book-detail-value">
-                            {Parser(DOMPurify.sanitize(description))}
+                            {description}
                           </span>
                         </div>
                       )}

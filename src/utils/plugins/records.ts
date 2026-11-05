@@ -2,9 +2,7 @@ import PluginModel from "../../models/Plugin";
 import { getBuiltinPluginDefinition } from "./catalog";
 import {
   isCustomRendererPlugin,
-  isCustomVoicePlugin,
   verifyCustomRendererPlugin,
-  verifyCustomVoicePlugin,
 } from "./customPlugin";
 import type {
   BuiltinPluginDefinition,
@@ -86,22 +84,6 @@ export const resolveStoredPlugin = async (record: unknown) => {
       custom.config,
       custom.langList,
       [],
-      custom.scriptSHA256,
-      custom.script
-    );
-  }
-
-  if (isCustomVoicePlugin(custom) && (await verifyCustomVoicePlugin(custom))) {
-    return new PluginModel(
-      custom.key,
-      custom.type,
-      custom.displayName,
-      custom.icon,
-      custom.version,
-      custom.autoValue,
-      custom.config,
-      custom.langList,
-      asVoiceList(custom.voiceList),
       custom.scriptSHA256,
       custom.script
     );

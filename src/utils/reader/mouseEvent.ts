@@ -4,7 +4,6 @@ import { getIframeDoc, getIframeWin } from "./docUtil";
 import {
   handleExitFullScreen,
   handleFullScreen,
-  isReadingAidMode,
   sleep,
   throttle,
 } from "../common";
@@ -72,12 +71,7 @@ export const getSelectionSentence = (
       let fullText = (el as Element)?.textContent || "";
       let selectedText = sel.toString().trim();
       // Split on sentence-ending punctuation to find the sentence
-      // Avoid lookbehind (?<=) which is unsupported on low-version iOS Safari
-      const rawParts = fullText.split(/([.!?。！？])\s*/);
-      const sentences: string[] = [];
-      for (let i = 0; i < rawParts.length; i += 2) {
-        sentences.push(rawParts[i] + (rawParts[i + 1] ?? ""));
-      }
+      let sentences = fullText.split(/(?<=[.!?。！？])\s*/);
       for (let s of sentences) {
         if (s.includes(selectedText)) {
           return s.trim();
@@ -198,7 +192,6 @@ const NAV_TAB_SHORTCUTS: Array<{
   { shortcut: "openToc", tab: "contents" },
 ];
 let lock = false; //prevent from clicking too fasts
-
 const arrowKeys = async (
   rendition: any,
   event: any,
@@ -211,22 +204,6 @@ const arrowKeys = async (
     event.target.tagName.toLowerCase() === "input"
   ) {
     return;
-  }
-  if (readerMode === "scroll" && isReadingAidMode(format, bookKey)) {
-    // 段落模式下拦截滚动模式的原生滚动按键，改为逐段导航
-    const shortcutConfig = getShortcutConfig();
-    if (matchShortcut(event, shortcutConfig.prevPage)) {
-      event.preventDefault();
-      await rendition.prev();
-      handleShortcut(event, format, bookKey, rendition);
-      return;
-    }
-    if (matchShortcut(event, shortcutConfig.nextPage)) {
-      event.preventDefault();
-      await rendition.next();
-      handleShortcut(event, format, bookKey, rendition);
-      return;
-    }
   }
   if (isPrevPageKey(event, readerMode)) {
     event.preventDefault();
@@ -272,7 +249,7 @@ const handleShortcut = (
         if (ConfigService.getReaderConfig("isOpenInMain") === "yes") {
           window.electronAPI.invoke("exit-tab", "ping");
         } else {
-          window.electronAPI.invoke("exit-reader", "ping");
+          window.close();
         }
       } else {
         ConfigService.setReaderConfig("isFinishWebReading", "yes");
@@ -412,32 +389,17 @@ export const bindHtmlEvent = (
         renderBookFunc();
         return;
       }
-      // 阅读尺等辅助模式下滚轮完全接管为逐段导航，preventDefault 必须在
-      // lock 检查之前执行：锁定期内到达的连续滚轮事件若不拦截默认行为，
-      // 会触发原生滚动与遮罩过渡动画叠加，造成动画掉帧（键盘事件无默认
-      // 滚动行为，所以键盘快捷键不存在此问题）
-      if (
-        readerMode === "scroll" &&
-        Math.abs(event.deltaX) === 0 &&
-        isReadingAidMode(format, key)
-      ) {
-        event.preventDefault();
-      }
       if (lock) return;
       lock = true;
       if (readerMode === "scroll") {
-        if (Math.abs(event.deltaX) === 0 && isReadingAidMode(format, key)) {
-          await mouseChrome(rendition, event.deltaY);
-        } else {
-          await sleep(200);
-          await rendition.record();
-          if (
-            Math.abs(event.deltaX) === 0 &&
-            ConfigService.getReaderConfig("isDisableAutoScroll") !== "yes"
-          ) {
-            let srollElement = document.getElementById("page-area");
-            await scrollChapter(srollElement, rendition, event.deltaY);
-          }
+        await sleep(200);
+        await rendition.record();
+        if (
+          Math.abs(event.deltaX) === 0 &&
+          ConfigService.getReaderConfig("isDisableAutoScroll") !== "yes"
+        ) {
+          let srollElement = document.getElementById("page-area");
+          await scrollChapter(srollElement, rendition, event.deltaY);
         }
       } else {
         if (Math.abs(event.deltaX) === 0) {

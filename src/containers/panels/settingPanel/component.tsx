@@ -1,6 +1,5 @@
 import React from "react";
 import "./settingPanel.css";
-import { isReadingRawPDF } from "../../../utils/common";
 import ThemeList from "../../../components/readerSettings/themeList";
 import SliderList from "../../../components/readerSettings/sliderList";
 import DropdownList from "../../../components/readerSettings/dropdownList";
@@ -95,7 +94,12 @@ class SettingPanel extends React.Component<
           <ThemeList />
           {sliderConfigs
             .filter((item) => {
-              if (isReadingRawPDF(this.props.currentBook)) {
+              if (
+                this.props.currentBook.format === "PDF" &&
+                !ConfigService.getAllListConfig("convertPDFBooks").includes(
+                  this.props.currentBook.key
+                )
+              ) {
                 return item.isPDF;
               }
               return true;

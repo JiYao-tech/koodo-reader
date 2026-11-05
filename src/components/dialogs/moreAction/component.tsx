@@ -35,56 +35,28 @@ class MoreAction extends React.Component<MoreActionProps, MoreActionState> {
     this.state = { exportSubmenu: "" };
   }
 
-  renderFormatSubmenu(type: "notes" | "highlights" | "words") {
+  renderFormatSubmenu(type: "notes" | "highlights") {
     const isVisible = this.state.exportSubmenu === type;
     const isNotes = type === "notes";
-    const isWords = type === "words";
-    const filterFn = isWords
-      ? () => true
-      : isNotes
-        ? (note: any) =>
-            note.notes && note.notes.length > 0 && note.notes !== "annotation"
-        : (note: any) => note.notes === "";
-    const exportFn = (
-      isWords
-        ? exportDictionaryHistory
-        : isNotes
-          ? exportNotes
-          : exportHighlights
-    ) as (
-      records: any[],
-      books: any[],
-      format: "csv" | "md" | "txt" | "html" | "pdf" | "json"
-    ) => Promise<"success" | "failed" | "cancel">;
-    const formats = isWords
-      ? (["csv", "json"] as const)
-      : (["csv", "md", "txt", "html", "pdf", "json"] as const);
-    const formatLabels: Record<string, string> = {
-      csv: "CSV",
-      md: "Markdown",
-      txt: "TXT",
-      html: "HTML",
-      pdf: "PDF",
-      json: "JSON",
-    };
+    const filterFn = isNotes
+      ? (note: any) =>
+          note.notes && note.notes.length > 0 && note.notes !== "annotation"
+      : (note: any) => note.notes === "";
+    const exportFn = isNotes ? exportNotes : exportHighlights;
 
     const handleExport = async (
-      format: "csv" | "md" | "txt" | "html" | "pdf" | "json"
+      format: "csv" | "md" | "txt" | "html" | "pdf"
     ) => {
       let books = await DatabaseService.getAllRecords("books");
-      let records = (
+      let notes = (
         await DatabaseService.getRecordsByBookKey(
           this.props.currentBook.key,
-          isWords ? "words" : "notes"
+          "notes"
         )
       ).filter(filterFn);
-      if (records.length > 0) {
-        const result = await exportFn(records, books, format);
-        if (result === "success") {
-          toast.success(this.props.t("Export successful"), { id: "exporting" });
-        } else if (result === "failed") {
-          toast.error(this.props.t("Failed to export"), { id: "exporting" });
-        }
+      if (notes.length > 0) {
+        exportFn(notes, books, format);
+        toast.success(this.props.t("Export successful"), { id: "exporting" });
       } else {
         toast(this.props.t("Nothing to export"));
       }
@@ -93,7 +65,7 @@ class MoreAction extends React.Component<MoreActionProps, MoreActionState> {
       this.props.handleActionDialog(false);
     };
 
-    const noteOffset = isWords ? 3 : isNotes ? 1 : 2;
+    const noteOffset = isNotes ? 1 : 2;
     const itemHeight = 33;
     // 主菜单渲染时会被 clampMenuPosition 校正到视口内（靠近底部时会整体上移），
     // 格式子菜单必须以主菜单“实际渲染后的 top”为基准水平对齐，而不是用未校正的 top，
@@ -117,7 +89,7 @@ class MoreAction extends React.Component<MoreActionProps, MoreActionState> {
                     195,
                   mainMenuPos.top + noteOffset * itemHeight,
                   120,
-                  estimateMenuHeight(isWords ? 2 : 6)
+                  estimateMenuHeight(5)
                 );
                 return {
                   position: "fixed",
@@ -138,14 +110,24 @@ class MoreAction extends React.Component<MoreActionProps, MoreActionState> {
         }}
       >
         <div className="action-dialog-actions-container">
-          {formats.map((fmt) => (
+          {(["csv", "md", "txt", "html", "pdf"] as const).map((fmt) => (
             <div
               key={fmt}
               className="action-dialog-edit"
               style={{ paddingLeft: "0px" }}
               onClick={() => handleExport(fmt)}
             >
-              <p className="action-name">{formatLabels[fmt]}</p>
+              <p className="action-name">
+                {fmt === "csv"
+                  ? "CSV"
+                  : fmt === "md"
+                    ? "Markdown"
+                    : fmt === "txt"
+                      ? "TXT"
+                      : fmt === "html"
+                        ? "HTML"
+                        : "PDF"}
+              </p>
             </div>
           ))}
         </div>
@@ -285,16 +267,22 @@ class MoreAction extends React.Component<MoreActionProps, MoreActionState> {
             <div
               className="action-dialog-edit"
               style={{ paddingLeft: "0px" }}
-              onMouseEnter={() => {
-                this.setState({ exportSubmenu: "words" });
-              }}
-              onMouseLeave={() => {
-                this.setState({ exportSubmenu: "" });
+              onClick={async () => {
+                let dictHistory = await DatabaseService.getRecordsByBookKey(
+                  this.props.currentBook.key,
+                  "words"
+                );
+                let books = await DatabaseService.getAllRecords("books");
+                if (dictHistory.length > 0) {
+                  exportDictionaryHistory(dictHistory, books);
+                  toast.success(this.props.t("Export successful"), { id: "exporting" });
+                } else {
+                  toast(this.props.t("Nothing to export"));
+                }
               }}
             >
-              <p className="action-name export-action-name">
+              <p className="action-name">
                 <Trans>Export dictionary history</Trans>
-                <span className="icon-dropdown icon-export-all"></span>
               </p>
             </div>
             <div
@@ -438,7 +426,6 @@ class MoreAction extends React.Component<MoreActionProps, MoreActionState> {
         </div>
         {this.renderFormatSubmenu("notes")}
         {this.renderFormatSubmenu("highlights")}
-        {this.renderFormatSubmenu("words")}
       </>
     );
   }

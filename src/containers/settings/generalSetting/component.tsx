@@ -46,8 +46,6 @@ class GeneralSetting extends React.Component<
       isDisableAI: ConfigService.getReaderConfig("isDisableAI") === "yes",
       isUseOriginalName:
         ConfigService.getReaderConfig("isUseOriginalName") === "yes",
-      isAIAnalyzeTitle:
-        ConfigService.getReaderConfig("isAIAnalyzeTitle") === "yes",
       isExportOriginalName:
         ConfigService.getReaderConfig("isExportOriginalName") === "yes",
       isDisableUpdate:

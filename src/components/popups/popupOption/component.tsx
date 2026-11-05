@@ -7,10 +7,7 @@ import {
   popupOptionMap,
   PopupOptionKey,
 } from "../../../constants/popupList";
-import {
-  ConfigService,
-  HighlightUtil,
-} from "../../../assets/lib/kookit-extra-browser.min";
+import { ConfigService, HighlightUtil } from "../../../assets/lib/kookit-extra-browser.min";
 import toast from "react-hot-toast";
 import {
   getSelection,
@@ -19,7 +16,7 @@ import {
 } from "../../../utils/reader/mouseEvent";
 import copy from "copy-text-to-clipboard";
 import { getIframeDoc } from "../../../utils/reader/docUtil";
-import { isReadingRawPDF, openExternalUrl } from "../../../utils/common";
+import { openExternalUrl } from "../../../utils/common";
 import { createHighlight } from "../../../utils/reader/noteUtil";
 import { Tooltip } from "react-tooltip";
 
@@ -36,25 +33,19 @@ class PopupOption extends React.Component<PopupOptionProps> {
     this.props.handleOpenMenu(true);
   };
   handleCopy = () => {
-    const format = this.props.currentBook.format;
-    let text = getSelection(format);
+    let text = getSelection(this.props.currentBook.format);
     if (!text) return;
-    if (isReadingRawPDF(this.props.currentBook)) {
+    if (
+      this.props.currentBook.format === "PDF" &&
+      !ConfigService.getAllListConfig("convertPDFBooks").includes(
+        this.props.currentBook.key
+      )
+    ) {
       text = text.split("\n").join(" ").trim();
     }
-    let copied = false;
-    const docs = getIframeDoc(format);
-    for (let i = 0; i < docs.length && !copied; i++) {
-      const doc = docs[i];
-      if (!doc) continue;
-      const sel = doc.getSelection();
-      if (!sel || sel.rangeCount === 0 || !sel.toString().trim()) continue;
-      copied = doc.execCommand("copy");
-    }
-    if (!copied) {
-      copy(text);
-    }
+    copy(text);
     this.props.handleOpenMenu(false);
+    let docs = getIframeDoc(this.props.currentBook.format);
     for (let i = 0; i < docs.length; i++) {
       let doc = docs[i];
       if (!doc) continue;

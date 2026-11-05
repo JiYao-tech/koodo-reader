@@ -5,11 +5,7 @@ import toast from "react-hot-toast";
 import { ConfigService } from "../../../assets/lib/kookit-extra-browser.min";
 import packageJson from "../../../../package.json";
 
-import {
-  getWebsiteLang,
-  getWebsiteUrl,
-  openExternalUrl,
-} from "../../../utils/common";
+import { getWebsiteUrl, openExternalUrl } from "../../../utils/common";
 import copyTextToClipboard from "copy-text-to-clipboard";
 import { isElectron } from "react-device-detect";
 import { checkDeveloperUpdate } from "../../../utils/request/common";
@@ -55,10 +51,19 @@ class AboutSetting extends React.Component<SettingInfoProps, SettingInfoState> {
                         id: "checking_update",
                       }
                     );
+
+                    let lang = "en";
+                    if (
+                      ConfigService.getReaderConfig("lang") &&
+                      ConfigService.getReaderConfig("lang").startsWith("zh")
+                    ) {
+                      lang = "zh";
+                    }
                     setTimeout(() => {
                       openExternalUrl(
                         getWebsiteUrl() +
-                          getWebsiteLang() +
+                          "/" +
+                          lang +
                           "/download" +
                           "?version=developer"
                       );
@@ -87,7 +92,7 @@ class AboutSetting extends React.Component<SettingInfoProps, SettingInfoState> {
             }}
           >
             {[
-              { value: "", label: "Please select" },
+              {value:"",label: "Please select"},
               { value: "dev", label: "Developer version" },
               { value: "stable", label: "Stable version" },
             ].map((item) => (
@@ -122,7 +127,9 @@ class AboutSetting extends React.Component<SettingInfoProps, SettingInfoState> {
             <span
               className="change-location-button"
               onClick={async () => {
-                window.electronAPI.invoke("open-console", "ping");
+                window
+                  .electronAPI
+                  .invoke("open-console", "ping");
               }}
             >
               <Trans>View</Trans>
@@ -135,19 +142,14 @@ class AboutSetting extends React.Component<SettingInfoProps, SettingInfoState> {
           <span
             className="change-location-button"
             onClick={async () => {
-              openExternalUrl(getWebsiteUrl() + getWebsiteLang() + "/document");
-            }}
-          >
-            <Trans>Visit</Trans>
-          </span>
-        </div>
-        <div className="setting-dialog-new-title">
-          <Trans>FAQ</Trans>
-
-          <span
-            className="change-location-button"
-            onClick={async () => {
-              openExternalUrl(getWebsiteUrl() + getWebsiteLang() + "/faq");
+              if (
+                ConfigService.getReaderConfig("lang") &&
+                ConfigService.getReaderConfig("lang").startsWith("zh")
+              ) {
+                openExternalUrl(getWebsiteUrl() + "/zh/document");
+              } else {
+                openExternalUrl(getWebsiteUrl() + "/en/document");
+              }
             }}
           >
             <Trans>Visit</Trans>
@@ -159,7 +161,14 @@ class AboutSetting extends React.Component<SettingInfoProps, SettingInfoState> {
           <span
             className="change-location-button"
             onClick={async () => {
-              openExternalUrl(getWebsiteUrl() + getWebsiteLang() + "/support");
+              if (
+                ConfigService.getReaderConfig("lang") &&
+                ConfigService.getReaderConfig("lang").startsWith("zh")
+              ) {
+                openExternalUrl(getWebsiteUrl() + "/zh/support");
+              } else {
+                openExternalUrl(getWebsiteUrl() + "/en/support");
+              }
             }}
           >
             <Trans>Visit</Trans>
@@ -171,9 +180,14 @@ class AboutSetting extends React.Component<SettingInfoProps, SettingInfoState> {
           <span
             className="change-location-button"
             onClick={async () => {
-              openExternalUrl(
-                getWebsiteUrl() + getWebsiteLang() + "/use-shortcut"
-              );
+              if (
+                ConfigService.getReaderConfig("lang") &&
+                ConfigService.getReaderConfig("lang").startsWith("zh")
+              ) {
+                openExternalUrl(getWebsiteUrl() + "/zh/use-shortcut");
+              } else {
+                openExternalUrl(getWebsiteUrl() + "/en/use-shortcut");
+              }
             }}
           >
             <Trans>Visit</Trans>

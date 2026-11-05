@@ -7,7 +7,6 @@ import i18n from "../../i18n";
 import { handleExitApp } from "./common";
 import {
   getServerRegion,
-  getWebsiteLang,
   getWebsiteUrl,
   openExternalUrl,
   openInBrowser,
@@ -223,7 +222,11 @@ export const getTTSAudio = async (
           isShowingQuotaAlert = false;
           quotaAlertDismissTime = Date.now();
           openExternalUrl(
-            getWebsiteUrl() + getWebsiteLang() + "/tts-quota"
+            getWebsiteUrl() +
+              (ConfigService.getReaderConfig("lang").startsWith("zh")
+                ? "/zh"
+                : "/en") +
+              "/tts-quota"
           );
         } else {
           isShowingQuotaAlert = false;
@@ -250,7 +253,11 @@ export const getTTSAudio = async (
             let tempToken = response.data.access_token;
             let deviceUuid = await TokenService.getFingerprint();
             openInBrowser(
-              getWebsiteUrl() + getWebsiteLang() + "/pricing?temp_token=" +
+              getWebsiteUrl() +
+                (ConfigService.getReaderConfig("lang").startsWith("zh")
+                  ? "/zh"
+                  : "/en") +
+                "/pricing?temp_token=" +
                 tempToken +
                 "&device_uuid=" +
                 deviceUuid
@@ -305,19 +312,6 @@ export const getWordDefinitions = async (
 export const getBookMetadata = async (name: string, author: string) => {
   let readerRequest = await getReaderRequest();
   let response = await readerRequest.getBookMetadata({ name, author });
-  if (response.code === 200) {
-    return response;
-  } else if (response.code === 401) {
-    handleExitApp();
-    return;
-  } else {
-    toast.error(i18n.t("Fetch failed, error code") + ": " + response.msg);
-  }
-  return response;
-};
-export const analyzeBookTitle = async (title: string) => {
-  let readerRequest = await getReaderRequest();
-  let response = await readerRequest.analyzeBookTitle({ title });
   if (response.code === 200) {
     return response;
   } else if (response.code === 401) {

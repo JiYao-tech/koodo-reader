@@ -1,6 +1,6 @@
 import { connect } from "react-redux";
 import { stateType } from "../../store";
-import PageWidget from "./component";
+import Background from "./component";
 import {
   handleCurrentChapter,
   handleCurrentChapterIndex,
@@ -38,4 +38,4 @@ const actionCreator = {
 export default connect(
   mapStateToProps,
   actionCreator
-)(withTranslation()(PageWidget) as any);
+)(withTranslation()(Background) as any);

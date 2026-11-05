@@ -14,7 +14,6 @@ import {
   generateSyncRecord,
   getICloudDrivePath,
   getServerRegion,
-  getWebsiteLang,
   getWebsiteUrl,
   handleContextMenu,
   openExternalUrl,
@@ -328,11 +327,7 @@ class SyncSetting extends React.Component<SettingInfoProps, SettingInfoState> {
     }
     if (name === "local") {
       let result = await backup(name);
-      if (result === "cancel") {
-        toast.dismiss("backup");
-        return;
-      }
-      if (result === "success") {
+      if (result) {
         toast.dismiss("backup");
         toast.success(this.props.t("Execute successful"));
         this.props.handleFetchBooks();
@@ -354,12 +349,7 @@ class SyncSetting extends React.Component<SettingInfoProps, SettingInfoState> {
     });
     this.props.handleLoadingDialog(true);
     let result = await backup(name);
-    if (result === "cancel") {
-      this.props.handleLoadingDialog(false);
-      toast.dismiss("backup");
-      return;
-    }
-    if (result === "success") {
+    if (result) {
       this.props.handleLoadingDialog(false);
       toast.dismiss("backup");
       toast.success(this.props.t("Execute successful"));
@@ -377,11 +367,7 @@ class SyncSetting extends React.Component<SettingInfoProps, SettingInfoState> {
     }
     if (name === "local") {
       let result = await restore(name);
-      if (result === "cancel") {
-        toast.dismiss("backup");
-        return;
-      }
-      if (result === "success") {
+      if (result) {
         toast.dismiss("backup");
         toast.success(this.props.t("Execute successful"));
         this.props.handleFetchBooks();
@@ -405,12 +391,7 @@ class SyncSetting extends React.Component<SettingInfoProps, SettingInfoState> {
     toast.dismiss("backup");
     toast(this.props.t("Downloading, please wait"));
     let result = await restore(name);
-    if (result === "cancel") {
-      this.props.handleLoadingDialog(false);
-      toast.dismiss("backup");
-      return;
-    }
-    if (result === "success") {
+    if (result) {
       this.props.handleLoadingDialog(false);
       toast.dismiss("backup");
       toast.success(this.props.t("Execute successful"));
@@ -965,11 +946,9 @@ class SyncSetting extends React.Component<SettingInfoProps, SettingInfoState> {
                     <div
                       className="voice-add-cancel"
                       style={{ borderWidth: 0, lineHeight: "30px" }}
-                  onClick={() => {
-                    openExternalUrl(
-                      getWebsiteUrl() + getWebsiteLang() + "/add-source"
-                    );
-                  }}
+                      onClick={() => {
+                        openExternalUrl(getWebsiteUrl() + "/zh/add-source");
+                      }}
                     >
                       {this.props.t("How to fill out")}
                     </div>
@@ -1273,7 +1252,10 @@ class SyncSetting extends React.Component<SettingInfoProps, SettingInfoState> {
                 style={{ textDecoration: "underline" }}
                 onClick={() => {
                   openExternalUrl(
-                    getWebsiteUrl() + getWebsiteLang() + "/use-sync"
+                    getWebsiteUrl() +
+                      (ConfigService.getReaderConfig("lang").startsWith("zh")
+                        ? "/zh/use-sync"
+                        : "/en/use-sync")
                   );
                 }}
               >

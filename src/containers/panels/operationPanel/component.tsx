@@ -100,7 +100,7 @@ class OperationPanel extends React.Component<
       if (ConfigService.getReaderConfig("isOpenInMain") === "yes") {
         window.electronAPI.invoke("exit-tab", "ping");
       } else {
-        window.electronAPI.invoke("exit-reader", "ping");
+        window.close();
       }
     } else {
       ConfigService.setReaderConfig("isFinishWebReading", "yes");

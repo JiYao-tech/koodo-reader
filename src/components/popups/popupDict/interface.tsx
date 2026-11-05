@@ -25,5 +25,4 @@ export interface PopupDictState {
   isShowUrl: boolean;
   aiAnswer: string;
   isAiWaiting: boolean;
-  isAiStreaming: boolean;
 }

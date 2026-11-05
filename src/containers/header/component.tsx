@@ -29,10 +29,11 @@ import {
   checkMissingBook,
   generateSyncRecord,
   getBookPartialMd5,
+  getChatLocale,
   getTaskStats,
-  getWebsiteLang,
   getWebsiteUrl,
   openInBrowser,
+  resetKoodoSync,
   scanFolderForNewBooks,
   showTaskProgress,
   throttle,
@@ -41,6 +42,7 @@ import {
 } from "../../utils/common";
 import { driveList } from "../../constants/driveList";
 import SupportDialog from "../../components/dialogs/supportDialog";
+import SyncService from "../../utils/storage/syncService";
 import { LocalFileManager } from "../../utils/file/localFile";
 import packageJson from "../../../package.json";
 import { getTempToken, updateUserConfig } from "../../utils/request/user";
@@ -671,8 +673,9 @@ class Header extends React.Component<HeaderProps, HeaderState> {
               let deviceUuid = await TokenService.getFingerprint();
               let url =
                 getWebsiteUrl() +
-                getWebsiteLang() +
-                "/faq" +
+                (ConfigService.getReaderConfig("lang").startsWith("zh")
+                  ? "/zh/faq"
+                  : "/en/faq") +
                 "?referer=app&version=" +
                 packageJson.version +
                 "&client=web&device=" +
@@ -754,31 +757,6 @@ class Header extends React.Component<HeaderProps, HeaderState> {
               ></span>
             </span>
           </div>
-          {!this.props.isAuthed && (
-            <div
-              className="setting-icon-container"
-              onClick={() => {
-                this.props.handleSetting(true);
-                this.props.handleSettingMode("account");
-                this.props.handleAbout(false);
-              }}
-              onMouseLeave={() => {
-                this.props.handleAbout(false);
-              }}
-              style={{ marginTop: "2px", fontWeight: "bold" }}
-            >
-              <span
-                data-tooltip-id="my-tooltip"
-                data-tooltip-content={this.props.t("Register / Login")}
-                data-tooltip-place="left"
-              >
-                <span
-                  className="icon-account setting-icon"
-                  style={{ fontSize: "25px" }}
-                ></span>
-              </span>
-            </div>
-          )}
           <div
             className="setting-icon-container"
             onClick={async () => {
@@ -891,7 +869,9 @@ class Header extends React.Component<HeaderProps, HeaderState> {
                     let deviceUuid = await TokenService.getFingerprint();
                     openInBrowser(
                       getWebsiteUrl() +
-                        getWebsiteLang() +
+                        (ConfigService.getReaderConfig("lang").startsWith("zh")
+                          ? "/zh"
+                          : "/en") +
                         "/pricing?temp_token=" +
                         tempToken +
                         "&device_uuid=" +
@@ -932,7 +912,9 @@ class Header extends React.Component<HeaderProps, HeaderState> {
                     let deviceUuid = await TokenService.getFingerprint();
                     openInBrowser(
                       getWebsiteUrl() +
-                        getWebsiteLang() +
+                        (ConfigService.getReaderConfig("lang").startsWith("zh")
+                          ? "/zh"
+                          : "/en") +
                         "/pricing?temp_token=" +
                         tempToken +
                         "&device_uuid=" +

@@ -11,7 +11,6 @@ import {
   checkReachPageEnd,
   getAllVoices,
   getFormatFromAudioPath,
-  isReadingRawPDF,
   langToName,
   sleep,
   splitSentences,
@@ -19,7 +18,6 @@ import {
 import { isElectron } from "react-device-detect";
 import toast from "react-hot-toast";
 import TTSUtil from "../../utils/reader/ttsUtil";
-import { getTextRules } from "../../utils/common";
 import "./textToSpeech.css";
 import { fetchUserInfo } from "../../utils/request/user";
 import { getSplitSentence } from "../../utils/request/reader";
@@ -400,8 +398,6 @@ class TextToSpeech extends React.Component<
     ) {
       ConfigService.setReaderConfig("voiceEngine", "system");
     }
-    // 每次开始朗读前刷新文本规则（replace / delete）
-    TTSUtil.setTextRules(getTextRules(this.props.currentBook?.key));
     this.handleStartSpeech();
   };
   handlePauseAudio = async () => {
@@ -590,48 +586,6 @@ class TextToSpeech extends React.Component<
         };
       });
     } else {
-      // 多角色朗读的所有角色统一使用 multiRoleVoiceType 约束的引擎类型，
-      // 并校验 voice/engine 组合在声音列表中真实存在（自动修复遗留的混合组合）
-      const voiceType =
-        ConfigService.getReaderConfig("multiRoleVoiceType") || "";
-      const resolveVoice = (voiceName: string, voiceEngine: string) => {
-        if (!voiceName) return null;
-        const matched =
-          this.getVoiceByNameAndEngine(voiceName, voiceEngine) ||
-          this.voices.find((item: any) => item.name === voiceName);
-        if (!matched) return null;
-        const matchedEngine = matched.plugin || "system";
-        if (
-          voiceType === "" ||
-          (voiceType === "custom"
-            ? matchedEngine !== "system" &&
-              matchedEngine !== "official-ai-voice-plugin"
-            : matchedEngine === voiceType)
-        ) {
-          return { voiceName, voiceEngine: matchedEngine };
-        }
-        return null;
-      };
-      const globalVoice = resolveVoice(
-        ConfigService.getReaderConfig("voiceName"),
-        ConfigService.getReaderConfig("voiceEngine") || "system"
-      );
-      const narratorVoiceInfo =
-        resolveVoice(
-          this.state.multiRoleNarratorVoice,
-          this.state.multiRoleNarratorEngine || "system"
-        ) || globalVoice;
-      if (voiceType !== "" && voiceType !== "system" && !narratorVoiceInfo) {
-        // AI/自定义类型下没有任何可用声音时，回退到全局单语音朗读
-        nodeList = nodeTextList.map((text: string) => {
-          return {
-            text,
-            voiceName: ConfigService.getReaderConfig("voiceName"),
-            voiceEngine: ConfigService.getReaderConfig("voiceEngine"),
-          };
-        });
-        return nodeList;
-      }
       toast.loading(this.props.t("Analyzing roles, please wait..."), {
         id: "tts-load",
       });
@@ -648,39 +602,32 @@ class TextToSpeech extends React.Component<
       let res = await getSplitSentence(splitTextList);
       toast.dismiss("tts-load");
 
-      const narratorVoice = narratorVoiceInfo || {
-        voiceName: "",
-        voiceEngine: "system",
-      };
-      const maleVoice =
-        resolveVoice(
-          this.state.multiRoleMaleVoice,
-          this.state.multiRoleMaleEngine || "system"
-        ) || narratorVoice;
-      const femaleVoice =
-        resolveVoice(
-          this.state.multiRoleFemaleVoice,
-          this.state.multiRoleFemaleEngine || "system"
-        ) || narratorVoice;
-      const childVoice =
-        resolveVoice(
-          this.state.multiRoleChildVoice,
-          this.state.multiRoleChildEngine || "system"
-        ) || narratorVoice;
+      let narratorVoice = this.state.multiRoleNarratorVoice;
+      let narratorEngine = this.state.multiRoleNarratorEngine;
+      let maleVoice = this.state.multiRoleMaleVoice;
+      let maleEngine = this.state.multiRoleMaleEngine;
+      let femaleVoice = this.state.multiRoleFemaleVoice;
+      let femaleEngine = this.state.multiRoleFemaleEngine;
+      let childVoice = this.state.multiRoleChildVoice;
+      let childEngine = this.state.multiRoleChildEngine;
       if (res && res.data && res.data.sentences) {
         nodeList = res.data.sentences.map((item: any) => {
-          let voice = narratorVoice;
+          let voiceName = narratorVoice;
+          let voiceEngine = narratorEngine;
           if (item.role === "male") {
-            voice = maleVoice;
+            voiceName = maleVoice || narratorVoice;
+            voiceEngine = maleEngine || narratorEngine;
           } else if (item.role === "female") {
-            voice = femaleVoice;
+            voiceName = femaleVoice || narratorVoice;
+            voiceEngine = femaleEngine || narratorEngine;
           } else if (item.role === "child") {
-            voice = childVoice;
+            voiceName = childVoice || narratorVoice;
+            voiceEngine = childEngine || narratorEngine;
           }
           return {
             text: item.text,
-            voiceName: voice.voiceName,
-            voiceEngine: voice.voiceEngine,
+            voiceName,
+            voiceEngine,
           };
         });
       } else {
@@ -691,7 +638,12 @@ class TextToSpeech extends React.Component<
     }
 
     if (nodeList.length === 0) {
-      if (isReadingRawPDF(this.props.currentBook)) {
+      if (
+        this.props.currentBook.format === "PDF" &&
+        !ConfigService.getAllListConfig("convertPDFBooks").includes(
+          this.props.currentBook.key
+        )
+      ) {
         let currentPosition = this.props.htmlBook.rendition.getPosition();
         await this.props.htmlBook.rendition.goToChapterIndex(
           parseInt(currentPosition.chapterDocIndex) +
@@ -716,7 +668,10 @@ class TextToSpeech extends React.Component<
       this.setState({ currentIndex: index });
       let node = this.nodeList[index];
       let style = this.highlightUtil.buildTtsHighlightStyle(
-        isReadingRawPDF(this.props.currentBook),
+        this.props.currentBook.format === "PDF" &&
+          !ConfigService.getAllListConfig("convertPDFBooks").includes(
+            this.props.currentBook.key
+          ),
         ConfigService.getReaderConfig("textOrientation") === "vertical"
       );
       this.props.htmlBook.rendition.highlightAudioNode(node.text, style);
@@ -748,7 +703,7 @@ class TextToSpeech extends React.Component<
         speed * 100 - 100,
         this.props.plugins,
         this.nodeList,
-        20,
+        10,
         false,
         node.voiceEngine === "official-ai-voice-plugin"
       );
@@ -780,7 +735,12 @@ class TextToSpeech extends React.Component<
       }
 
       if (isReachPageEnd) {
-        if (isReadingRawPDF(this.props.currentBook)) {
+        if (
+          this.props.currentBook.format === "PDF" &&
+          !ConfigService.getAllListConfig("convertPDFBooks").includes(
+            this.props.currentBook.key
+          )
+        ) {
           let currentPosition = this.props.htmlBook.rendition.getPosition();
           await this.props.htmlBook.rendition.goToChapterIndex(
             parseInt(currentPosition.chapterDocIndex) +
@@ -821,7 +781,10 @@ class TextToSpeech extends React.Component<
     this.setState({ currentIndex: index });
     let node = this.nodeList[index];
     let style = this.highlightUtil.buildTtsHighlightStyle(
-      isReadingRawPDF(this.props.currentBook),
+      this.props.currentBook.format === "PDF" &&
+        !ConfigService.getAllListConfig("convertPDFBooks").includes(
+          this.props.currentBook.key
+        ),
       ConfigService.getReaderConfig("textOrientation") === "vertical"
     );
     this.props.htmlBook.rendition.highlightAudioNode(node.text, style);
@@ -853,7 +816,12 @@ class TextToSpeech extends React.Component<
         isReachPageEnd = true;
       }
       if (isReachPageEnd) {
-        if (isReadingRawPDF(this.props.currentBook)) {
+        if (
+          this.props.currentBook.format === "PDF" &&
+          !ConfigService.getAllListConfig("convertPDFBooks").includes(
+            this.props.currentBook.key
+          )
+        ) {
           let currentPosition = this.props.htmlBook.rendition.getPosition();
           await this.props.htmlBook.rendition.goToChapterIndex(
             parseInt(currentPosition.chapterDocIndex) +
@@ -918,15 +886,13 @@ class TextToSpeech extends React.Component<
   ) => {
     return new Promise<string>(async (resolve) => {
       var msg = new SpeechSynthesisUtterance();
-      msg.text = TTSUtil.applyTextRules(
-        this.nodeList[index].text
-          .replace(/\s\s/g, "")
-          .replace(/\r/g, "")
-          .replace(/\n/g, "")
-          .replace(/\t/g, "")
-          .replace(/&/g, "")
-          .replace(/\f/g, "")
-      );
+      msg.text = this.nodeList[index].text
+        .replace(/\s\s/g, "")
+        .replace(/\r/g, "")
+        .replace(/\n/g, "")
+        .replace(/\t/g, "")
+        .replace(/&/g, "")
+        .replace(/\f/g, "");
       if (!voiceName) {
         voiceName = this.nativeVoices[0]?.name;
       }
@@ -1324,30 +1290,11 @@ class TextToSpeech extends React.Component<
                 id="multi-role-voice-type"
                 value={this.state.multiRoleVoiceType}
                 onChange={(event) => {
-                  if (event.target.value === this.state.multiRoleVoiceType)
-                    return;
                   this.setState({ multiRoleVoiceType: event.target.value });
                   ConfigService.setReaderConfig(
                     "multiRoleVoiceType",
                     event.target.value
                   );
-                  // 切换声音类型后清除各角色旧类型的 voice/engine 配置，
-                  // 避免遗留“系统声音 + AI 引擎”之类的混合组合
-                  ["Narrator", "Male", "Female", "Child"].forEach((role) => {
-                    ConfigService.setReaderConfig(`multiRole${role}Voice`, "");
-                    ConfigService.setReaderConfig(`multiRole${role}Engine`, "");
-                  });
-                  this.setState({
-                    multiRoleNarratorVoice: "",
-                    multiRoleNarratorEngine: "",
-                    multiRoleMaleVoice: "",
-                    multiRoleMaleEngine: "",
-                    multiRoleFemaleVoice: "",
-                    multiRoleFemaleEngine: "",
-                    multiRoleChildVoice: "",
-                    multiRoleChildEngine: "",
-                  });
-                  toast(this.props.t("Please reselect voices for all roles"));
                 }}
               >
                 <option value="" className="lang-setting-option">

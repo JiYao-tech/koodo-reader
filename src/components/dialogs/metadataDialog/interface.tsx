@@ -25,14 +25,7 @@ export interface CloudBookItem {
   publisher?: string;
   description?: string;
   cover?: string;
-  isbn?: string;
-  rating_source?: string;
-  rating?: number;
-  rating_count?: number;
-  categories?: string;
-  pub_date?: string;
-  language?: string;
-  pages?: number;
+  source: "cloud";
 }
 
 export type BookResultItem = CloudBookItem;

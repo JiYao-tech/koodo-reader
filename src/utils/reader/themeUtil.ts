@@ -1,3 +1,5 @@
+import { ConfigService } from "../../assets/lib/kookit-extra-browser.min";
+
 // CSS selectors grouped by style rule
 const BG_SOLID_SELECTORS = [
   ".delete-digest-button",

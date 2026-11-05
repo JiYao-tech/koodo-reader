@@ -1,5 +1,4 @@
 import Note from "../../models/Note";
-import { isReadingRawPDF } from "../common";
 import DatabaseService from "../storage/databaseService";
 import {
   ConfigService,
@@ -39,7 +38,10 @@ export async function createHighlight(params: DigestParams): Promise<void> {
   );
   let cfi = JSON.stringify(bookLocation);
 
-  if (isReadingRawPDF(currentBook)) {
+  if (
+    currentBook.format === "PDF" &&
+    !ConfigService.getAllListConfig("convertPDFBooks").includes(currentBook.key)
+  ) {
     let pdfLocation = htmlBook.rendition.getPositionByChapter(chapterDocIndex);
     cfi = JSON.stringify(pdfLocation);
   }

@@ -6,10 +6,6 @@ import { ConfigService } from "../../../assets/lib/kookit-extra-browser.min";
 import {
   BRUSH_COLORS,
   BRUSH_WIDTHS,
-  ERASER_WIDTH_DEFAULT,
-  ERASER_WIDTH_MAX,
-  ERASER_WIDTH_MIN,
-  ERASER_WIDTH_STEP,
   HIGHLIGHTER_COLORS,
   HIGHLIGHTER_WIDTHS,
   SHAPE_TYPES,
@@ -55,12 +51,6 @@ class AnnotationDialog extends React.Component<
         ConfigService.getReaderConfig("annotationShapeWidth") ||
           BRUSH_WIDTHS[1] + ""
       ),
-      annotationEraserWidth: parseFloat(
-        ConfigService.getReaderConfig("annotationEraserWidth") ||
-          ERASER_WIDTH_DEFAULT + ""
-      ),
-      annotationQuickErase:
-        ConfigService.getReaderConfig("annotationQuickErase") || "no",
       annotationTextSize: parseFloat(
         ConfigService.getReaderConfig("annotationTextSize") || "24"
       ),
@@ -151,27 +141,6 @@ class AnnotationDialog extends React.Component<
       shapeWidth: width,
     });
     ConfigService.setReaderConfig("annotationShapeWidth", width + "");
-  };
-  handleSelectEraserWidth = (width: number) => {
-    this.setState({ annotationEraserWidth: width });
-    this.props.htmlBook.rendition.applyAnnotationConfig({
-      eraserWidth: width,
-    });
-    ConfigService.setReaderConfig("annotationEraserWidth", width + "");
-  };
-  handleEraserWidthRelease = () => {
-    ConfigService.setReaderConfig(
-      "annotationEraserWidth",
-      this.state.annotationEraserWidth + ""
-    );
-  };
-  handleToggleQuickErase = () => {
-    const next = this.state.annotationQuickErase === "yes" ? "no" : "yes";
-    this.setState({ annotationQuickErase: next });
-    this.props.htmlBook.rendition.applyAnnotationConfig({
-      quickErase: next,
-    });
-    ConfigService.setReaderConfig("annotationQuickErase", next);
   };
   handleSelectTextSize = (size: number) => {
     this.setState({ annotationTextSize: size });
@@ -264,8 +233,6 @@ class AnnotationDialog extends React.Component<
       annotationShapeType,
       annotationShapeColor,
       annotationShapeWidth,
-      annotationEraserWidth,
-      annotationQuickErase,
       annotationTextSize,
       annotationTextFont,
       annotationTextColor,
@@ -356,20 +323,6 @@ class AnnotationDialog extends React.Component<
             title={this.props.t("Text")}
           >
             <span className="icon-font annotation-dialog-tab-icon"></span>
-          </span>
-          <span
-            className={
-              annotationStyle === "eraser"
-                ? "annotation-dialog-tab active-annotation-dialog-tab"
-                : "annotation-dialog-tab"
-            }
-            onClick={() => this.handleSelectTab("eraser")}
-            title={this.props.t("Eraser")}
-          >
-            <span
-              className="icon-eraser-line annotation-dialog-tab-icon"
-              style={{ fontSize: "20px" }}
-            ></span>
           </span>
         </div>
 
@@ -576,56 +529,6 @@ class AnnotationDialog extends React.Component<
                   </li>
                 ))}
               </ul>
-            </div>
-          </>
-        ) : annotationStyle === "eraser" ? (
-          <>
-            <div className="annotation-dialog-section annotation-text-size-section">
-              <div className="annotation-opacity-label">
-                <span>{this.props.t("Eraser size")}</span>
-                <span className="annotation-opacity-value">
-                  {annotationEraserWidth}
-                </span>
-              </div>
-              <input
-                type="range"
-                min={ERASER_WIDTH_MIN}
-                max={ERASER_WIDTH_MAX}
-                step={ERASER_WIDTH_STEP}
-                value={annotationEraserWidth}
-                className="annotation-opacity-slider"
-                onChange={(e) =>
-                  this.handleSelectEraserWidth(parseFloat(e.target.value))
-                }
-                onPointerUp={this.handleEraserWidthRelease}
-                onMouseUp={this.handleEraserWidthRelease}
-                style={{ width: "100%" }}
-              />
-            </div>
-            <div
-              className="annotation-quick-erase-container"
-              onClick={this.handleToggleQuickErase}
-            >
-              <span className="annotation-quick-erase-title">
-                {this.props.t("Quick erase")}
-              </span>
-              <span
-                className="annotation-quick-erase-switch"
-                style={
-                  annotationQuickErase === "yes"
-                    ? { opacity: 1 }
-                    : { opacity: 0.4 }
-                }
-              >
-                <span
-                  className="annotation-quick-erase-button"
-                  style={
-                    annotationQuickErase === "yes"
-                      ? { transform: "translateX(20px)" }
-                      : { transform: "translateX(0px)" }
-                  }
-                ></span>
-              </span>
             </div>
           </>
         ) : (

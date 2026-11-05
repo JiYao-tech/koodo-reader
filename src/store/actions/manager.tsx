@@ -24,6 +24,9 @@ import { resetThirdpartyRequest } from "../../utils/request/thirdparty";
 import DictUtil from "../../utils/file/dictUtil";
 import TokenService from "../../utils/storage/tokenService";
 import { resolveStoredPlugin } from "../../utils/plugins/records";
+import { isBuiltinPluginKey } from "../../utils/plugins/catalog";
+
+let hasWarnedDisabledCustomVoice = false;
 
 export function handleBooks(books: BookModel[]) {
   return { type: "HANDLE_BOOKS", payload: books };
@@ -302,6 +305,15 @@ export function handleFetchPlugins() {
         }
         pluginList = pluginList.filter((p: PluginModel) => p.type !== "ai");
 
+        const hasDisabledCustomVoice = pluginList.some(
+          (plugin: PluginModel) =>
+            plugin.type === "voice" && !isBuiltinPluginKey(plugin.key)
+        );
+        if (hasDisabledCustomVoice && !hasWarnedDisabledCustomVoice) {
+          hasWarnedDisabledCustomVoice = true;
+          toast.error(i18n.t("Custom voice plugins have been disabled"));
+        }
+
         const resolvedPlugins = await Promise.all(
           pluginList.map((plugin) => resolveStoredPlugin(plugin))
         );
@@ -448,7 +460,6 @@ export function handleFetchPlugins() {
           );
           pluginList.push(sumPlugin);
         }
-        const isAuthed = (await TokenService.getToken("is_authed")) === "yes";
         if (ConfigService.getReaderConfig("isDisableAI") !== "yes") {
           // 官方 AI 语音始终展示（不依赖登录），选择时再判断是否升级
           let sortedVoiceList = [
@@ -458,8 +469,7 @@ export function handleFetchPlugins() {
                 label:
                   i18n.t("Kokoro") +
                   " - " +
-                  (KookitConfig.SelfHostedVoiceList.includes(item.name) &&
-                  isAuthed
+                  (KookitConfig.SelfHostedVoiceList.includes(item.name)
                     ? i18n.t("Limited free") + " - "
                     : "") +
                   item.displayName +
@@ -477,8 +487,7 @@ export function handleFetchPlugins() {
                 label:
                   "Azure" +
                   " - " +
-                  (KookitConfig.SelfHostedVoiceList.includes(item.name) &&
-                  isAuthed
+                  (KookitConfig.SelfHostedVoiceList.includes(item.name)
                     ? i18n.t("Limited free") + " - "
                     : "") +
                   item.displayName +
