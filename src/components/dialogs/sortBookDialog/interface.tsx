@@ -3,6 +3,7 @@ export interface SortDialogProps {
   noteSortCode: { sort: number; order: number };
   isSortDisplay: boolean;
   mode: string;
+  shelfTitle: string; // manual sort (custom)
   handleBookSortCode: (bookSortCode: { sort: number; order: number }) => void;
   handleNoteSortCode: (bookSortCode: { sort: number; order: number }) => void;
   handleSortDisplay: (isSortDisplay: boolean) => void;
