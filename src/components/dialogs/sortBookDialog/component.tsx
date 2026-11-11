@@ -174,9 +174,13 @@ class SortDialog extends React.Component<SortDialogProps, SortDialogState> {
         {this.state.isManualDialogOpen &&
           createPortal(
             <SortBookManualDialog
-              handleClose={() =>
-                this.setState({ isManualDialogOpen: false })
-              }
+              mode={this.props.mode}
+              shelfTitle={this.props.shelfTitle}
+              handleClose={() => {
+                this.setState({ isManualDialogOpen: false });
+                // manual sort (custom): refresh the list with the new order
+                this.props.handleFetchBooks();
+              }}
             />,
             document.body
           )}

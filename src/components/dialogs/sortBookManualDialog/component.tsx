@@ -14,15 +14,38 @@ class SortBookManualDialog extends React.Component<
   SortBookManualDialogProps,
   SortBookManualDialogState
 > {
+  // manual sort (custom): latest drag result, kept outside state so that
+  // onEnd always sees the final order even if setState has not committed yet
+  private pendingKeys: string[] | null = null;
+
   constructor(props: SortBookManualDialogProps) {
     super(props);
     this.state = {
       bookList: [],
+      fullOrder: [], // manual sort (custom)
     };
   }
 
   componentDidMount = async () => {
     await this.loadBookList();
+  };
+
+  // manual sort (custom): the keys that are visible in the current view.
+  // Mirrors the filtering used by bookList (shelf first, then favorites),
+  // returns null when the whole library is displayed.
+  getScopeKeys = (): Set<string> | null => {
+    const { mode, shelfTitle } = this.props;
+    if (shelfTitle) {
+      const shelfList: string[] =
+        ConfigService.getMapConfig(shelfTitle, "shelfList") || [];
+      return new Set(shelfList);
+    }
+    if (mode === "favorite") {
+      const favoriteList: string[] =
+        ConfigService.getAllListConfig("favoriteBooks") || [];
+      return new Set(favoriteList);
+    }
+    return null;
   };
 
   loadBookList = async () => {
@@ -38,27 +61,45 @@ class SortBookManualDialog extends React.Component<
     const bookMap = new Map<string, any>(
       validBooks.map((book) => [book.key, book])
     );
-    const orderedBooks = [
-      ...manualKeys
-        .filter((key: string) => bookMap.has(key))
-        .map((key: string) => bookMap.get(key)),
-      ...validBooks.filter((book) => !manualKeys.includes(book.key)),
+    const fullOrder: string[] = [
+      ...manualKeys.filter((key: string) => bookMap.has(key)),
+      ...validBooks
+        .filter((book) => !manualKeys.includes(book.key))
+        .map((book) => book.key),
     ];
+    // manual sort (custom): only show the books of the current view
+    const scopeKeys = this.getScopeKeys();
+    const visibleKeys = scopeKeys
+      ? fullOrder.filter((key) => scopeKeys.has(key))
+      : fullOrder;
     this.setState({
-      bookList: orderedBooks.map((book, index) => ({
-        id: index,
-        key: book.key,
-        name: book.name,
-        author: book.author || "",
-      })),
+      fullOrder,
+      bookList: visibleKeys.map((key, index) => {
+        const book = bookMap.get(key);
+        return {
+          id: index,
+          key: key,
+          name: book.name,
+          author: book.author || "",
+        };
+      }),
     });
   };
 
   handleSortEnd = () => {
-    ConfigService.setAllListConfig(
-      this.state.bookList.map((item) => item.key),
-      "sortedBookList"
+    // manual sort (custom): write the new order back into the full order, so
+    // that books outside the current view keep their positions
+    const currentKeys = (
+      this.pendingKeys || this.state.bookList.map((item) => item.key)
+    ) as string[];
+    this.pendingKeys = null;
+    const scopeKeys = new Set(currentKeys);
+    let cursor = 0;
+    const mergedOrder = this.state.fullOrder.map((key) =>
+      scopeKeys.has(key) ? currentKeys[cursor++] : key
     );
+    ConfigService.setAllListConfig(mergedOrder, "sortedBookList");
+    this.setState({ fullOrder: mergedOrder });
   };
 
   handleReset = () => {
@@ -78,11 +119,17 @@ class SortBookManualDialog extends React.Component<
       >
         <div className="backup-dialog-title">
           <Trans>Manual order</Trans>
+          {/* manual sort (custom): show which shelf is being arranged */}
+          {this.props.shelfTitle ? ` · ${this.props.shelfTitle}` : ""}
         </div>
         <div className="import-dialog-option">
           <ReactSortable
             list={this.state.bookList}
-            setList={(newState) => this.setState({ bookList: newState })}
+            setList={(newState) => {
+              // manual sort (custom): remember the drag result for onEnd
+              this.pendingKeys = newState.map((item) => item.key);
+              this.setState({ bookList: newState });
+            }}
             animation={200}
             delayOnTouchStart={true}
             delay={2}
@@ -113,6 +160,11 @@ class SortBookManualDialog extends React.Component<
               );
             })}
           </ReactSortable>
+          {this.state.bookList.length === 0 && (
+            <div style={{ textAlign: "center", opacity: 0.6, marginTop: "30px" }}>
+              <Trans>Empty</Trans>
+            </div>
+          )}
         </div>
         <div
           className="import-dialog-back-button"

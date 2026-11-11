@@ -14,6 +14,7 @@ const mapStateToProps = (state: stateType) => {
     bookSortCode: state.manager.bookSortCode,
     noteSortCode: state.manager.noteSortCode,
     mode: state.sidebar.mode,
+    shelfTitle: state.sidebar.shelfTitle, // manual sort (custom)
     isSortDisplay: state.manager.isSortDisplay,
   };
 };
