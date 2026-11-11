@@ -141,6 +141,10 @@ export function handleFetchBooks() {
       case 7:
         sortField = "size";
         break;
+      // manual sort (custom): user-defined order stored in sortedBookList
+      case 8:
+        sortField = "manual";
+        break;
     }
     let orderField = "ASC";
     if (bookSortCode.order === 2) {
@@ -202,6 +206,17 @@ export function handleFetchBooks() {
         sortedKeys = sortedKeys.reverse();
       }
       sortedKeys = sortedKeys;
+      bookList = sortedKeys.map((key: string) => {
+        return { key };
+      });
+    } else if (sortField === "manual") {
+      // manual sort (custom): keep user-defined order, newly added books appended to the end
+      let allBookKeys = await DatabaseService.getAllRecordKeys("books");
+      let manualKeys = ConfigService.getAllListConfig("sortedBookList") || [];
+      let sortedKeys = [
+        ...manualKeys.filter((key: string) => allBookKeys.includes(key)),
+        ...allBookKeys.filter((key: string) => !manualKeys.includes(key)),
+      ];
       bookList = sortedKeys.map((key: string) => {
         return { key };
       });

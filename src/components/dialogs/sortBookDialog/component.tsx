@@ -1,14 +1,17 @@
 import React from "react";
+import { createPortal } from "react-dom"; // manual sort (custom)
 import "./sortDialog.css";
 import { Trans } from "react-i18next";
 import { SortDialogProps, SortDialogState } from "./interface";
 import { ConfigService } from "../../../assets/lib/kookit-extra-browser.min";
+import SortBookManualDialog from "../sortBookManualDialog"; // manual sort (custom)
 
 class SortDialog extends React.Component<SortDialogProps, SortDialogState> {
   constructor(props: SortDialogProps) {
     super(props);
     this.state = {
       isNote: this.props.mode === "note" || this.props.mode === "highlight",
+      isManualDialogOpen: false, // manual sort (custom)
     };
   }
 
@@ -31,6 +34,10 @@ class SortDialog extends React.Component<SortDialogProps, SortDialogState> {
         JSON.stringify({ sort: code, order: this.props.bookSortCode.order })
       );
       this.props.handleFetchBooks();
+      if (code === 8) {
+        // manual sort (custom): open the drag dialog for arranging books
+        this.setState({ isManualDialogOpen: true });
+      }
     }
   };
   handleOrder = (code: number) => {
@@ -62,9 +69,12 @@ class SortDialog extends React.Component<SortDialogProps, SortDialogState> {
     return (
       <div
         className="sort-dialog-container"
-        onMouseLeave={() => {
+      onMouseLeave={() => {
+        // manual sort (custom): keep popup open while the drag dialog is on
+        if (!this.state.isManualDialogOpen) {
           this.props.handleSortDisplay(false);
-        }}
+        }
+      }}
         onMouseEnter={() => {
           this.props.handleSortDisplay(true);
         }}
@@ -103,6 +113,7 @@ class SortDialog extends React.Component<SortDialogProps, SortDialogState> {
               "Author name",
               "Reading progress",
               "File size",
+              "Manual order", // manual sort (custom)
             ].map((item, index) => {
               return (
                 <li
@@ -158,6 +169,17 @@ class SortDialog extends React.Component<SortDialogProps, SortDialogState> {
             )}
           </li>
         </ul>
+        {/* manual sort (custom): render the drag dialog via portal so that
+            it is positioned against the viewport instead of this popup */}
+        {this.state.isManualDialogOpen &&
+          createPortal(
+            <SortBookManualDialog
+              handleClose={() =>
+                this.setState({ isManualDialogOpen: false })
+              }
+            />,
+            document.body
+          )}
       </div>
     );
   }

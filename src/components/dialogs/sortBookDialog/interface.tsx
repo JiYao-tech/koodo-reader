@@ -11,4 +11,5 @@ export interface SortDialogProps {
 }
 export interface SortDialogState {
   isNote: boolean;
+  isManualDialogOpen: boolean; // manual sort (custom)
 }
