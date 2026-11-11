@@ -1,16 +1,13 @@
-import { useTranslation } from "react-i18next";
-
+import React from "react";
 import "./popupOption.css";
 
+import { PopupOptionProps } from "./interface";
 import {
   getEnabledPopupOptionKeys,
   popupOptionMap,
   PopupOptionKey,
 } from "../../../constants/popupList";
-import {
-  ConfigService,
-  HighlightUtil,
-} from "../../../assets/lib/kookit-extra-browser.min";
+import { ConfigService, HighlightUtil } from "../../../assets/lib/kookit-extra-browser.min";
 import toast from "react-hot-toast";
 import {
   getSelection,
@@ -19,267 +16,231 @@ import {
 } from "../../../utils/reader/mouseEvent";
 import copy from "copy-text-to-clipboard";
 import { getIframeDoc } from "../../../utils/reader/docUtil";
-import {
-  isFixedLayoutBook,
-  isReadingRawPDF,
-  openExternalUrl,
-} from "../../../utils/common";
+import { openExternalUrl } from "../../../utils/common";
 import { createHighlight } from "../../../utils/reader/noteUtil";
 import { Tooltip } from "react-tooltip";
-import { useAppStore } from "../../../store/useAppStore";
-
-export interface PopupOptionProps {
-  noteKey: string;
-  rect: DOMRect;
-  cfiRange: string;
-  chapterDocIndex: number;
-  chapter: string;
-}
 
 declare var window: any;
 
-const highlightUtil: any = new HighlightUtil(ConfigService);
-
-const PopupOption = (props: PopupOptionProps) => {
-  const currentBook = useAppStore((s) => s.book.currentBook);
-  const highlight = useAppStore((s) => s.reader.highlight);
-  const htmlBook = useAppStore((s) => s.reader.htmlBook);
-  const handleOpenMenu = useAppStore((s) => s.handleOpenMenu);
-  const handleNoteKey = useAppStore((s) => s.handleNoteKey);
-  const handleMenuMode = useAppStore((s) => s.handleMenuMode);
-  const handlePopupOptionDialog = useAppStore((s) => s.handlePopupOptionDialog);
-  const handleSpeechDialog = useAppStore((s) => s.handleSpeechDialog);
-  const handleSpeechStartText = useAppStore((s) => s.handleSpeechStartText);
-  const handleSpeechAutoStart = useAppStore((s) => s.handleSpeechAutoStart);
-  const handleFetchNotes = useAppStore((s) => s.handleFetchNotes);
-  const handleOriginalText = useAppStore((s) => s.handleOriginalText);
-  const handleOriginalSentence = useAppStore((s) => s.handleOriginalSentence);
-  const handleQuoteText = useAppStore((s) => s.handleQuoteText);
-  const { t } = useTranslation();
-  const handleNote = () => {
-    handleMenuMode("note");
-    handleOpenMenu(true);
+class PopupOption extends React.Component<PopupOptionProps> {
+  highlightUtil: any;
+  constructor(props: PopupOptionProps) {
+    super(props);
+    this.highlightUtil = new HighlightUtil(ConfigService);
+  }
+  handleNote = () => {
+    this.props.handleMenuMode("note");
+    this.props.handleOpenMenu(true);
   };
-  const handleCopy = () => {
-    let text = getSelection(currentBook);
+  handleCopy = () => {
+    let text = getSelection(this.props.currentBook.format);
     if (!text) return;
-    if (isReadingRawPDF(currentBook)) {
+    if (
+      this.props.currentBook.format === "PDF" &&
+      !ConfigService.getAllListConfig("convertPDFBooks").includes(
+        this.props.currentBook.key
+      )
+    ) {
       text = text.split("\n").join(" ").trim();
     }
-    let copied = false;
-    const docs = getIframeDoc(currentBook);
-    for (let i = 0; i < docs.length && !copied; i++) {
-      const doc = docs[i];
-      if (!doc) continue;
-      const sel = doc.getSelection();
-      if (!sel || sel.rangeCount === 0 || !sel.toString().trim()) continue;
-      copied = doc.execCommand("copy");
-    }
-    if (!copied) {
-      copy(text);
-    }
-    handleOpenMenu(false);
+    copy(text);
+    this.props.handleOpenMenu(false);
+    let docs = getIframeDoc(this.props.currentBook.format);
     for (let i = 0; i < docs.length; i++) {
       let doc = docs[i];
       if (!doc) continue;
       doc.getSelection()?.empty();
     }
-    toast.success(t("Copying successful"));
+    toast.success(this.props.t("Copying successful"));
   };
-  const handleTrans = () => {
-    handleMenuMode("trans");
-    handleOriginalText(getSelection(currentBook));
-    handleOpenMenu(true);
+  handleTrans = () => {
+    this.props.handleMenuMode("trans");
+    this.props.handleOriginalText(getSelection(this.props.currentBook.format));
+    this.props.handleOpenMenu(true);
   };
-  const handleDict = () => {
-    handleMenuMode("dict");
-    handleOriginalText(getSelection(currentBook));
-    handleOriginalSentence(
-      getSelectionSentence(currentBook)
+  handleDict = () => {
+    this.props.handleMenuMode("dict");
+    this.props.handleOriginalText(getSelection(this.props.currentBook.format));
+    this.props.handleOriginalSentence(
+      getSelectionSentence(this.props.currentBook.format)
     );
-    handleOpenMenu(true);
+    this.props.handleOpenMenu(true);
   };
-  const handleDigest = async () => {
+  handleDigest = async () => {
     await createHighlight({
-      currentBook: currentBook,
-      htmlBook: htmlBook,
-      chapterDocIndex: props.chapterDocIndex,
-      chapter: props.chapter,
-      color: highlightUtil.formatHighlightValue(highlight),
-      t: t,
-      onNoteClick: handleNoteClick,
+      currentBook: this.props.currentBook,
+      htmlBook: this.props.htmlBook,
+      chapterDocIndex: this.props.chapterDocIndex,
+      chapter: this.props.chapter,
+      color: this.highlightUtil.formatHighlightValue(this.props.highlight),
+      t: this.props.t,
+      onNoteClick: this.handleNoteClick,
       onSuccess: () => {
-        handleOpenMenu(false);
-        handleFetchNotes();
-        handleMenuMode("");
+        this.props.handleOpenMenu(false);
+        this.props.handleFetchNotes();
+        this.props.handleMenuMode("");
       },
     });
   };
 
-  const handleNoteClick = (event: Event) => {
-    handleNoteKey((event.target as any).dataset.key);
-    handleMenuMode("note");
-    handleOpenMenu(true);
+  handleNoteClick = (event: Event) => {
+    this.props.handleNoteKey((event.target as any).dataset.key);
+    this.props.handleMenuMode("note");
+    this.props.handleOpenMenu(true);
   };
-  const handleJump = (url: string) => {
+  handleJump = (url: string) => {
     openExternalUrl(url);
   };
-  const handleSearchInternet = () => {
+  handleSearchInternet = () => {
     switch (ConfigService.getReaderConfig("searchEngine")) {
       case "google":
-        handleJump(
+        this.handleJump(
           "https://www.google.com/search?q=" +
-            getSelection(currentBook)
+            getSelection(this.props.currentBook.format)
         );
         break;
       case "baidu":
-        handleJump(
+        this.handleJump(
           "https://www.baidu.com/s?wd=" +
-            getSelection(currentBook)
+            getSelection(this.props.currentBook.format)
         );
         break;
       case "bing":
-        handleJump(
+        this.handleJump(
           "https://www.bing.com/search?q=" +
-            getSelection(currentBook)
+            getSelection(this.props.currentBook.format)
         );
         break;
       case "duckduckgo":
-        handleJump(
+        this.handleJump(
           "https://duckduckgo.com/?q=" +
-            getSelection(currentBook)
+            getSelection(this.props.currentBook.format)
         );
         break;
       case "yandex":
-        handleJump(
+        this.handleJump(
           "https://yandex.com/search/?text=" +
-            getSelection(currentBook)
+            getSelection(this.props.currentBook.format)
         );
         break;
       case "yahoo":
-        handleJump(
+        this.handleJump(
           "https://search.yahoo.com/search?p=" +
-            getSelection(currentBook)
+            getSelection(this.props.currentBook.format)
         );
         break;
       case "naver":
-        handleJump(
+        this.handleJump(
           "https://search.naver.com/search.naver?where=nexearch&sm=top_hty&fbm=1&ie=utf8&query=" +
-            getSelection(currentBook)
+            getSelection(this.props.currentBook.format)
         );
         break;
       case "baike":
-        handleJump(
+        this.handleJump(
           "https://baike.baidu.com/item/" +
-            getSelection(currentBook)
+            getSelection(this.props.currentBook.format)
         );
         break;
       case "wiki":
-        handleJump(
+        this.handleJump(
           "https://en.wikipedia.org/wiki/" +
-            getSelection(currentBook)
+            getSelection(this.props.currentBook.format)
         );
         break;
       default:
-        handleJump(
+        this.handleJump(
           navigator.language === "zh-CN"
             ? "https://www.baidu.com/s?wd=" +
-                getSelection(currentBook)
+                getSelection(this.props.currentBook.format)
             : "https://www.google.com/search?q=" +
-                getSelection(currentBook)
+                getSelection(this.props.currentBook.format)
         );
         break;
     }
   };
-  const handleSearchBook = () => {
-    searchInTheBook("", currentBook, true);
-    handleOpenMenu(false);
+  handleSearchBook = () => {
+    searchInTheBook("", this.props.currentBook.format, true);
+    this.props.handleOpenMenu(false);
   };
 
-  const handleSpeak = () => {
+  handleSpeak = () => {
     var msg = new SpeechSynthesisUtterance();
-    msg.text = getSelection(currentBook);
+    msg.text = getSelection(this.props.currentBook.format);
     if (window.speechSynthesis && window.speechSynthesis.getVoices) {
       msg.voice = window.speechSynthesis.getVoices()[0];
       window.speechSynthesis.speak(msg);
     }
   };
 
-  const handleReadFromHere = () => {
+  handleReadFromHere = () => {
     const text =
-      getSelectionSentence(currentBook) ||
-      getSelection(currentBook);
+      getSelectionSentence(this.props.currentBook.format) ||
+      getSelection(this.props.currentBook.format);
     if (!text) return;
 
-    handleSpeechStartText(text);
-    handleSpeechAutoStart(true);
-    handleSpeechDialog(true);
-    handleOpenMenu(false);
+    this.props.handleSpeechStartText(text);
+    this.props.handleSpeechAutoStart(true);
+    this.props.handleSpeechDialog(true);
+    this.props.handleOpenMenu(false);
   };
 
-  const handleAssistant = () => {
-    const text = getSelection(currentBook);
+  handleAssistant = () => {
+    const text = getSelection(this.props.currentBook.format);
     if (!text) return;
 
-    handleQuoteText(text);
-    handleMenuMode("assistant");
-    handleOpenMenu(true);
+    this.props.handleQuoteText(text);
+    this.props.handleMenuMode("assistant");
+    this.props.handleOpenMenu(true);
   };
 
-  const handleOpenPopupOptionDialog = () => {
-    handleOpenMenu(false);
-    handlePopupOptionDialog(true);
+  handleOpenPopupOptionDialog = () => {
+    this.props.handleOpenMenu(false);
+    this.props.handlePopupOptionDialog(true);
   };
 
-  const handleOptionClick = (optionKey: PopupOptionKey) => {
+  handleOptionClick = (optionKey: PopupOptionKey) => {
     switch (optionKey) {
       case "note":
-        handleNote();
+        this.handleNote();
         break;
       case "highlight":
-        handleDigest();
+        this.handleDigest();
         break;
       case "translation":
-        handleTrans();
+        this.handleTrans();
         break;
       case "copy":
-        handleCopy();
+        this.handleCopy();
         break;
       case "search-book":
-        handleSearchBook();
+        this.handleSearchBook();
         break;
       case "dict":
-        handleDict();
+        this.handleDict();
         break;
       case "browser":
-        handleSearchInternet();
+        this.handleSearchInternet();
         break;
       case "speaker":
-        handleSpeak();
+        this.handleSpeak();
         break;
       case "speech-start":
-        handleReadFromHere();
+        this.handleReadFromHere();
         break;
       case "assistant":
-        handleAssistant();
+        this.handleAssistant();
         break;
       default:
         break;
     }
   };
 
-  const isFixedLayout = isFixedLayoutBook(currentBook);
+  render() {
     const popupOptionKeys = getEnabledPopupOptionKeys().filter((item) => {
-      if (
+      return !(
         item === "assistant" &&
         ConfigService.getReaderConfig("isDisableAI") === "yes"
-      ) {
-        return false;
-      }
-      if (isFixedLayout && (item === "note" || item === "highlight")) {
-        return false;
-      }
-      return true;
+      );
     });
     return (
       <div className="menu-list">
@@ -291,12 +252,12 @@ const PopupOption = (props: PopupOptionProps) => {
               key={item.key}
               className={item.name + "-option"}
               onClick={() => {
-                handleOptionClick(item.key);
+                this.handleOptionClick(item.key);
               }}
             >
               <span
                 data-tooltip-id="option-tooltip"
-                data-tooltip-content={t(item.title)}
+                data-tooltip-content={this.props.t(item.title)}
               >
                 <span
                   className={`icon-${item.icon} ${item.name}-icon`}
@@ -309,12 +270,12 @@ const PopupOption = (props: PopupOptionProps) => {
         <div
           className="setting-option"
           onClick={() => {
-            handleOpenPopupOptionDialog();
+            this.handleOpenPopupOptionDialog();
           }}
         >
           <span
             data-tooltip-id="option-tooltip"
-            data-tooltip-content={t("Customize popup menu")}
+            data-tooltip-content={this.props.t("Customize popup menu")}
           >
             <span
               className="icon-setting setting-icon"
@@ -323,7 +284,8 @@ const PopupOption = (props: PopupOptionProps) => {
           </span>
         </div>
       </div>
-  );
-};
+    );
+  }
+}
 
 export default PopupOption;

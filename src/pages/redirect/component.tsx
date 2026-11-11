@@ -1,46 +1,57 @@
-import { useTranslation } from "react-i18next";
-import { Navigate, useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import React from "react";
 import "./manager.css";
+import { RedirectProps, RedirectState } from "./interface";
 import { Trans } from "react-i18next";
-import { getLoginParamsFromUrl } from "../../utils/file/common";
+import { getParamsFromUrl } from "../../utils/file/common";
 import copy from "copy-text-to-clipboard";
-import LazyLottie from "../../components/lazyLottie";
+import { withRouter } from "react-router-dom";
+import Lottie from "lottie-react";
 import emptyDark from "../../assets/images/empty-dark.svg";
 import emptyLight from "../../assets/images/empty-light.svg";
+import animationSuccess from "../../assets/lotties/success.json";
 import toast, { Toaster } from "react-hot-toast";
 import { ConfigService } from "../../assets/lib/kookit-extra-browser.min";
 import * as Kookit from "../../assets/lib/kookit.min";
 import { removeSearchParams } from "../../utils/common";
 import { BookHelper } from "../../assets/lib/kookit.min";
-import { useAppStore } from "../../store/useAppStore";
-
 declare var window: any;
 
-const AuthFlow = () => {
-  const handleLoadingDialog = useAppStore((s) => s.handleLoadingDialog);
-  const { t } = useTranslation();
-  const navigate = useNavigate();
-  const [isAuthed, setIsAuthed] = useState(false);
-  const [isError, setIsError] = useState(false);
-  const [token, setToken] = useState("");
-
-  useEffect(() => {
-    let params: any = getLoginParamsFromUrl();
-    if (document.location.href.indexOf("import") > -1) {
+class Redirect extends React.Component<RedirectProps, RedirectState> {
+  timer!: NodeJS.Timeout;
+  constructor(props: RedirectProps) {
+    super(props);
+    this.state = {
+      isAuthed: false,
+      isError: false,
+      token: "",
+    };
+  }
+  handleFinish = () => {
+    this.props.handleLoadingDialog(false);
+  };
+  showMessage = (message: string) => {
+    toast(this.props.t(message));
+  };
+  componentDidMount() {
+    let url = document.location.href;
+    if (document.location.hash === "#/" && url.indexOf("code") === -1) {
+      this.props.history.push("/manager/home");
+    }
+    if (url.indexOf("error") > -1) {
+      this.setState({ isError: true });
+    }
+    if (url.indexOf("import") > -1) {
       window.Kookit = Kookit;
       window.BookHelper = BookHelper;
     }
-    if (params.error) {
-      setIsError(true);
-    }
-    if (params.code) {
+    if (url.indexOf("code") > -1) {
+      let params: any = getParamsFromUrl();
       removeSearchParams();
       if (params.locationid) {
         params.code = params.code + "$" + params.locationid;
       }
-      setToken(params.code);
-      setIsAuthed(true);
+      this.setState({ token: params.code });
+      this.setState({ isAuthed: true });
       let state = params.state;
       // boxnet doesn't allow | in state
       if (state) {
@@ -67,27 +78,95 @@ const AuthFlow = () => {
         }
       }
     }
-    if (params.access_token) {
-      setToken(params.access_token);
-      setIsAuthed(true);
+    if (url.indexOf("access_token") > -1) {
+      let params: any = getParamsFromUrl();
+      this.setState({ token: params.access_token });
+      this.setState({ isAuthed: true });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }
 
-  const handleFinish = () => {
-    handleLoadingDialog(false);
-  };
-  const showMessage = (message: string) => {
-    toast(t(message));
-  };
+  render() {
+    if (this.state.isError || this.state.isAuthed) {
+      return (
+        <div className="backup-page-finish-container">
+          <Toaster
+            toastOptions={{
+              style: {
+                wordWrap: "break-word",
+                wordBreak: "break-word",
+                whiteSpace: "normal",
+                overflowWrap: "break-word",
+              },
+            }}
+          />
+          <div className="backup-page-finish" style={{ maxWidth: "70%" }}>
+            {this.state.isAuthed ? (
+              <Lottie
+                animationData={animationSuccess}
+                loop={false}
+                style={{ height: 80, width: "100%" }}
+              />
+            ) : (
+              <span className="icon-close auth-page-close-icon theme-color-delete"></span>
+            )}
 
-  if (isError || isAuthed) {
+            <div className="backup-page-finish-text">
+              <Trans>
+                {this.state.isAuthed
+                  ? "Authorisation successful"
+                  : "Authorisation failed"}
+              </Trans>
+            </div>
+            {this.state.isAuthed ? (
+              <div
+                className="token-dialog-token-text"
+                onClick={() => {
+                  copy(this.state.token);
+                  toast.success(this.props.t("Copied"));
+                }}
+              >
+                <Trans>Copy token</Trans>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+
     return (
-      <div className="backup-page-finish-container">
+      <div className="manager">
+        <div className="empty-page-info-container" style={{ margin: 100 }}>
+          <div className="empty-page-info-main">
+            <Trans>It seems like you're lost</Trans>
+          </div>
+          <div
+            className="empty-page-info-sub"
+            onClick={() => {
+              this.props.history.push("/manager/home");
+            }}
+            style={{ marginTop: 10, cursor: "pointer" }}
+          >
+            <Trans>Return to home</Trans>
+          </div>
+        </div>
+        <img
+          src={
+            ConfigService.getReaderConfig("appSkin") === "night" ||
+            (ConfigService.getReaderConfig("appSkin") === "system" &&
+              ConfigService.getReaderConfig("isOSNight") === "yes")
+              ? emptyDark
+              : emptyLight
+          }
+          alt=""
+          className="empty-page-illustration"
+        />
         <Toaster
+          position="top-right"
+          containerStyle={{
+            maxWidth: "500px",
+          }}
           toastOptions={{
             style: {
-              padding: "8px 10px",
               wordWrap: "break-word",
               wordBreak: "break-word",
               whiteSpace: "normal",
@@ -95,95 +174,9 @@ const AuthFlow = () => {
             },
           }}
         />
-        <div className="backup-page-finish" style={{ maxWidth: "70%" }}>
-          {isAuthed ? (
-            <LazyLottie
-              animation="success"
-              loop={false}
-              style={{ height: 80, width: "100%" }}
-            />
-          ) : (
-            <span className="icon-close auth-page-close-icon theme-color-delete"></span>
-          )}
-
-          <div className="backup-page-finish-text">
-            <Trans>
-              {isAuthed ? "Authorisation successful" : "Authorisation failed"}
-            </Trans>
-          </div>
-          {isAuthed ? (
-            <div
-              className="token-dialog-token-text"
-              onClick={() => {
-                copy(token);
-                toast.success(t("Copied"));
-              }}
-            >
-              <Trans>Copy token</Trans>
-            </div>
-          ) : null}
-        </div>
       </div>
     );
   }
+}
 
-  return (
-    <div className="manager">
-      <div className="empty-page-info-container" style={{ margin: 100 }}>
-        <div className="empty-page-info-main">
-          <Trans>It seems like you're lost</Trans>
-        </div>
-        <div
-          className="empty-page-info-sub"
-          onClick={() => {
-            navigate("/manager/home");
-          }}
-          style={{ marginTop: 10, cursor: "pointer" }}
-        >
-          <Trans>Return to home</Trans>
-        </div>
-      </div>
-      <img
-        src={
-          ConfigService.getReaderConfig("appSkin") === "night" ||
-          (ConfigService.getReaderConfig("appSkin") === "system" &&
-            ConfigService.getReaderConfig("isOSNight") === "yes")
-            ? emptyDark
-            : emptyLight
-        }
-        alt=""
-        className="empty-page-illustration"
-      />
-      <Toaster
-        position="top-right"
-        containerStyle={{
-          maxWidth: "500px",
-        }}
-        toastOptions={{
-          style: {
-            wordWrap: "break-word",
-            wordBreak: "break-word",
-            whiteSpace: "normal",
-            overflowWrap: "break-word",
-          },
-        }}
-      />
-    </div>
-  );
-};
-
-const Redirect = () => {
-  const params: any = getLoginParamsFromUrl();
-  const hash = document.location.hash;
-  if (
-    !params.error &&
-    !params.code &&
-    !params.access_token &&
-    (!hash || hash === "#" || hash === "#/")
-  ) {
-    return <Navigate to="/manager/home" replace />;
-  }
-  return <AuthFlow />;
-};
-
-export default Redirect;
+export default withRouter(Redirect as any);

@@ -1,19 +1,23 @@
-import Book from "../../models/Book";
-import { isPaginatedBook } from "../common";
+import { ConfigService } from "../../assets/lib/kookit-extra-browser.min";
 
-export const getOuterDoc = () => {
+export const getIframeDoc = (format: string, bookKey?: string) => {
   let pageArea = document.getElementById("page-area");
 
-  if (!pageArea) return null;
+  if (!pageArea) return [];
   let iframe = pageArea.getElementsByTagName("iframe")[0];
-  if (!iframe) return null;
-  return iframe.contentDocument;
-};
+  if (!iframe) return [];
+  let doc = iframe.contentDocument;
 
-export const getIframeDoc = (book: Book) => {
-  let doc = getOuterDoc();
-  if (!doc) return [];
-  if (isPaginatedBook(book)) {
+  if (!doc) {
+    return [];
+  }
+  if (
+    format === "PDF" &&
+    !(
+      bookKey &&
+      ConfigService.getAllListConfig("convertPDFBooks").includes(bookKey)
+    )
+  ) {
     let subIframes = doc.querySelectorAll("iframe");
     return [
       doc,

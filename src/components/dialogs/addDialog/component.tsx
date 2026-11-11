@@ -1,202 +1,185 @@
-import { useTranslation } from "react-i18next";
-import React, { useState } from "react";
+import React, { Component } from "react";
 import { Trans } from "react-i18next";
-import { useAppStore } from "../../../store/useAppStore";
+import { AddDialogProps, AddDialogState } from "./interface";
 import "./addDialog.css";
 import toast from "react-hot-toast";
-import {
-  ConfigService,
-  CollectionUtil,
-} from "../../../assets/lib/kookit-extra-browser.min";
+import { ConfigService } from "../../../assets/lib/kookit-extra-browser.min";
 
-const collectionUtil = new CollectionUtil(ConfigService);
+class AddDialog extends Component<AddDialogProps, AddDialogState> {
+  constructor(props: AddDialogProps) {
+    super(props);
+    this.state = { isNew: true, shelfTitle: "", actionType: "copy" };
+  }
 
-const AddDialog = () => {
-  const currentBook = useAppStore((s) => s.book.currentBook);
-  const selectedBooks = useAppStore((s) => s.manager.selectedBooks);
-  const isSelectBook = useAppStore((s) => s.manager.isSelectBook);
-  const mode = useAppStore((s) => s.sidebar.mode);
-  const shelfTitle = useAppStore((s) => s.sidebar.shelfTitle);
-  const handleAddDialog = useAppStore((s) => s.handleAddDialog);
-  const handleActionDialog = useAppStore((s) => s.handleActionDialog);
-  const handleSelectBook = useAppStore((s) => s.handleSelectBook);
-  const handleMode = useAppStore((s) => s.handleMode);
-  const handleShelf = useAppStore((s) => s.handleShelf);
-  const handleSelectedBooks = useAppStore((s) => s.handleSelectedBooks);
-  const { t } = useTranslation();
-  const [isNew, setIsNew] = useState(true);
-  const [selectedShelfTitle, setShelfTitle] = useState("");
-  const [actionType, setActionType] = useState("copy");
-
-  const handleCancel = () => {
-    handleAddDialog(false);
+  handleCancel = () => {
+    this.props.handleAddDialog(false);
   };
-  const deleteKeyFromShelf = (key: string) => {
-    ConfigService.deleteFromMapConfig(shelfTitle, key, "shelfList");
-    if (collectionUtil.isCollection(key)) {
-      let collection = collectionUtil.getCollection(key);
-      if (collection) {
-        collection.books.forEach((bookKey) => {
-          ConfigService.deleteFromMapConfig(
-            shelfTitle,
-            bookKey,
-            "shelfList"
-          );
-        });
-      }
-    }
-  };
-  const handleComfirm = () => {
+  handleComfirm = () => {
     const inputElement: HTMLInputElement = document.querySelector(
       ".add-dialog-new-shelf-box"
     ) as HTMLInputElement;
-    let targetShelfTitle: string = selectedShelfTitle;
+    let shelfTitle: string = this.state.shelfTitle;
     let shelfList = ConfigService.getAllMapConfig("shelfList");
 
-    if (isNew) {
-      targetShelfTitle = inputElement.value;
-      if (shelfList.hasOwnProperty(targetShelfTitle)) {
-        toast(t("Duplicate shelf"));
+    if (this.state.isNew) {
+      shelfTitle = inputElement.value;
+      if (shelfList.hasOwnProperty(shelfTitle)) {
+        toast(this.props.t("Duplicate shelf"));
         return;
       }
-      ConfigService.setListConfig(targetShelfTitle, "sortedShelfList");
+      ConfigService.setListConfig(shelfTitle, "sortedShelfList");
     }
-    if (!targetShelfTitle) {
-      toast(t("Shelf Title is Empty"));
+    if (!shelfTitle) {
+      toast(this.props.t("Shelf Title is Empty"));
       return;
     }
     if (
-      !isSelectBook &&
-      shelfList[targetShelfTitle] &&
-      shelfList[targetShelfTitle].indexOf(currentBook.key) > -1
+      !this.props.isSelectBook &&
+      shelfList[shelfTitle] &&
+      shelfList[shelfTitle].indexOf(this.props.currentBook.key) > -1
     ) {
-      toast(t("Duplicate book"));
+      toast(this.props.t("Duplicate book"));
       return;
     }
-    if (isSelectBook) {
-      selectedBooks.forEach((item) => {
-        if (actionType === "move") {
-          deleteKeyFromShelf(item);
+    if (this.props.isSelectBook) {
+      this.props.selectedBooks.forEach((item) => {
+        if (this.state.actionType === "move") {
+          ConfigService.deleteFromMapConfig(
+            this.props.shelfTitle,
+            item,
+            "shelfList"
+          );
         }
-        ConfigService.setMapConfig(targetShelfTitle, item, "shelfList");
+        ConfigService.setMapConfig(shelfTitle, item, "shelfList");
       });
-      handleSelectBook(!isSelectBook);
-      if (isSelectBook) {
-        handleSelectedBooks([]);
+      this.props.handleSelectBook(!this.props.isSelectBook);
+      if (this.props.isSelectBook) {
+        this.props.handleSelectedBooks([]);
       }
     } else {
-      if (actionType === "move") {
-        deleteKeyFromShelf(currentBook.key);
+      if (this.state.actionType === "move") {
+        ConfigService.deleteFromMapConfig(
+          this.props.shelfTitle,
+          this.props.currentBook.key,
+          "shelfList"
+        );
       }
 
       ConfigService.setMapConfig(
-        targetShelfTitle,
-        currentBook.key,
+        shelfTitle,
+        this.props.currentBook.key,
         "shelfList"
       );
     }
 
-    handleAddDialog(false);
-    toast.success(t("Addition successful"));
-    handleActionDialog(false);
-    handleMode("shelf");
-    setTimeout(() => {
-      handleShelf(targetShelfTitle);
-    }, 1000);
+    this.props.handleAddDialog(false);
+    toast.success(this.props.t("Addition successful"));
+    this.props.handleActionDialog(false);
+    this.props.handleMode("shelf");
+    this.props.handleShelf(shelfTitle);
   };
-  const handleChange = (nextShelfTitle: string) => {
-    if (nextShelfTitle === "New shelf") {
-      setIsNew(true);
+  handleChange = (shelfTitle: string) => {
+    if (shelfTitle === "New shelf") {
+      this.setState({ isNew: true });
     } else {
-      setShelfTitle(nextShelfTitle);
-      setIsNew(false);
+      this.setState({ shelfTitle });
+      this.setState({ isNew: false });
     }
   };
-  const renderShelfList = () => {
-    let sortedShelfList =
-      ConfigService.getAllListConfig("sortedShelfList") || [];
-    let shelfTitleList = Object.keys(
-      ConfigService.getAllMapConfig("shelfList")
-    );
-    let shelfTitleOptions = [
-      "New shelf",
-      ...Array.from(new Set([...sortedShelfList, ...shelfTitleList])),
-    ];
-    return shelfTitleOptions.map((item) => {
-      return (
-        <option value={item} key={item} className="add-dialog-shelf-list-option">
-          {t(item)}
-        </option>
+  render() {
+    const renderShelfList = () => {
+      let sortedShelfList =
+        ConfigService.getAllListConfig("sortedShelfList") || [];
+      let shelfTitleList = Object.keys(
+        ConfigService.getAllMapConfig("shelfList")
       );
-    });
-  };
-
-  return (
-    <div className="add-dialog-container">
-      <div className="add-dialog-title">
-        <Trans>Add to shelf</Trans>
-      </div>
-      <div className="add-dialog-body">
-        {mode === "shelf" && (
-          <div className="add-dialog-field">
-            <span className="add-dialog-label">
+      let shelfTitle = [
+        "New shelf",
+        ...Array.from(new Set([...sortedShelfList, ...shelfTitleList])),
+      ];
+      return shelfTitle.map((item) => {
+        return (
+          <option
+            value={item}
+            key={item}
+            className="add-dialog-shelf-list-option"
+          >
+            {this.props.t(item)}
+          </option>
+        );
+      });
+    };
+    return (
+      <div
+        className="add-dialog-container"
+        style={{ height: this.props.mode === "shelf" ? "240px" : "189px" }}
+      >
+        <div className="add-dialog-title">
+          <Trans>Add to shelf</Trans>
+        </div>
+        {this.props.mode === "shelf" && (
+          <div className="add-dialog-shelf-list-container">
+            <div className="add-dialog-shelf-list-text">
               <Trans>Action</Trans>
-            </span>
+            </div>
             <select
               className="add-dialog-shelf-list-box"
               onChange={(event: React.ChangeEvent<HTMLSelectElement>) => {
-                setActionType(event.target.value);
+                this.setState({ actionType: event.target.value });
               }}
             >
               <option value="copy" className="add-dialog-shelf-list-option">
-                {t("Copy to")}
+                {this.props.t("Copy to")}
               </option>
               <option value="move" className="add-dialog-shelf-list-option">
-                {t("Move to")}
+                {this.props.t("Move to")}
               </option>
             </select>
           </div>
         )}
-        <div className="add-dialog-field">
-          <span className="add-dialog-label">
+        <div className="add-dialog-shelf-list-container">
+          <div className="add-dialog-shelf-list-text">
             <Trans>Select</Trans>
-          </span>
+          </div>
           <select
             className="add-dialog-shelf-list-box"
             onChange={(event: React.ChangeEvent<HTMLSelectElement>) => {
-              handleChange(event.target.value);
+              this.handleChange(event.target.value);
             }}
           >
             {renderShelfList()}
           </select>
         </div>
-        <div className="add-dialog-field">
-          <span className="add-dialog-label">
+        <div className="add-dialog-shelf-list-container">
+          <div className="add-dialog-new-shelf-text">
             <Trans>New</Trans>
-          </span>
-          <input className="add-dialog-new-shelf-box" disabled={!isNew} />
+          </div>
+          <input
+            className="add-dialog-new-shelf-box"
+            disabled={!this.state.isNew}
+          />
+        </div>
+        <div className="add-dialog-button-container">
+          <div
+            className="add-dialog-cancel"
+            onClick={() => {
+              this.handleCancel();
+            }}
+          >
+            <Trans>Cancel</Trans>
+          </div>
+          <div
+            className="add-dialog-confirm"
+            onClick={() => {
+              this.handleComfirm();
+            }}
+          >
+            <Trans>Confirm</Trans>
+          </div>
         </div>
       </div>
-      <div className="add-dialog-button-container">
-        <div
-          className="add-dialog-cancel"
-          onClick={() => {
-            handleCancel();
-          }}
-        >
-          <Trans>Cancel</Trans>
-        </div>
-        <div
-          className="add-dialog-confirm"
-          onClick={() => {
-            handleComfirm();
-          }}
-        >
-          <Trans>Confirm</Trans>
-        </div>
-      </div>
-    </div>
-  );
-};
+    );
+  }
+}
 
 export default AddDialog;

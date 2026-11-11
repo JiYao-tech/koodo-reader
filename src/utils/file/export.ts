@@ -12,7 +12,6 @@ import { isElectron } from "react-device-detect";
 import { Buffer } from "buffer";
 import i18n from "../../i18n";
 import toast from "react-hot-toast";
-import DatabaseService from "../storage/databaseService";
 declare var window: any;
 export const zipFilesToBlob = (buffers: ArrayBuffer[], names: string[]) => {
   var zip = new JSZip();
@@ -22,57 +21,11 @@ export const zipFilesToBlob = (buffers: ArrayBuffer[], names: string[]) => {
   return zip.generateAsync({ type: "blob" });
 };
 
-const getFileTimestamp = (): string => {
-  const now = new Date();
-  const date = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
-  return `${date}-${Date.now()}`;
-};
+let year = new Date().getFullYear(),
+  month = new Date().getMonth() + 1,
+  day = new Date().getDate();
 
-const getZipFileName = (type: string, format: string): string =>
-  `KoodoReader-${type}-${getFileTimestamp()}-${format.toUpperCase()}.zip`;
-
-export type ExportResult = "success" | "failed" | "cancel";
-
-export type ExportFormat = "csv" | "md" | "txt" | "html" | "pdf" | "json";
-
-export const KDZ_MIME = "application/vnd.koodo.kdz";
-
-// 获取书籍源文件，统一处理 fetchBook 返回 false / File 的情况
-const fetchBookBuffer = async (book: Book): Promise<any> => {
-  const result: boolean | ArrayBuffer | File = await BookUtil.fetchBook(
-    book.key,
-    book.format.toLowerCase(),
-    true,
-    book.path
-  );
-  if (!result) {
-    throw new Error("Book file not found");
-  }
-  if (result instanceof File) {
-    return await result.arrayBuffer();
-  }
-  return result;
-};
-
-// 获取一本书的笔记（含高亮，供后续过滤）与查词历史记录
-const fetchBookRecords = async (
-  book: Book
-): Promise<[Note[], DictHistory[]]> => {
-  const [notes, words] = await Promise.all([
-    DatabaseService.getRecordsByBookKey(book.key, "notes"),
-    DatabaseService.getRecordsByBookKey(book.key, "words"),
-  ]);
-  return [notes, words];
-};
-
-// 过滤规则与导出入口保持一致：notes 分为纯文字笔记与高亮两类
-const isTextNote = (note: any) =>
-  note.notes && note.notes.length > 0 && note.notes !== "annotation";
-const isHighlight = (note: any) => note.notes === "";
-
-export const exportBooks = async (
-  books: Book[]
-): Promise<ExportResult> => {
+export const exportBooks = async (books: Book[]) => {
   let totalSize = books.reduce((acc, book) => acc + book.size, 0);
   if (isElectron && totalSize > 500 * 1024 * 1024) {
     const ipcRenderer = window.electronAPI;
@@ -80,7 +33,8 @@ export const exportBooks = async (
     const path = window.electronAPI.path;
     const exportPath = await ipcRenderer.invoke("select-path");
     if (!exportPath) {
-      return "cancel";
+      toast.error(i18n.t("Please select a folder"));
+      return false;
     }
     toast.loading(i18n.t("Exporting..."), {
       id: "exporting",
@@ -90,8 +44,6 @@ export const exportBooks = async (
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     // 逐个获取并写入图书文件
-    let exportedSize = 0;
-    let failed = false;
     for (let i = 0; i < books.length; i++) {
       try {
         const book = books[i];
@@ -117,47 +69,33 @@ export const exportBooks = async (
               }
             );
           });
-          exportedSize += book.size;
-          const percent =
-            totalSize > 0
-              ? Math.min(100, Math.floor((exportedSize / totalSize) * 100))
-              : 100;
-          toast.loading(i18n.t("Exporting...") + ` ${percent}%`, {
-            id: "exporting",
-          });
         }
       } catch (error) {
         console.error(`Failed to export book ${books[i].name}:`, error);
         toast.error(i18n.t("Failed to export") + `: ${books[i].name}`, {
           id: "exporting",
         });
-        failed = true;
       }
     }
-    toast.dismiss("exporting");
-    return failed ? "failed" : "success";
+    return true;
   }
   let fetchPromises = BookUtil.fetchAllBooks(books);
   let booksBuffers: any[] = [];
 
-  try {
-    for (let index = 0; index < fetchPromises.length; index++) {
-      booksBuffers.push(await fetchPromises[index]);
-    }
-    let bookNames = books.map((item) => {
-      return getBookName(item);
-    });
-
-    saveAs(
-      await zipFilesToBlob(booksBuffers, bookNames),
-      `KoodoReader-Book-${getFileTimestamp()}.zip`
-    );
-    return "success";
-  } catch (error) {
-    console.error("Failed to export books:", error);
-    toast.error(i18n.t("Failed to export"), { id: "exporting" });
-    return "failed";
+  for (let index = 0; index < fetchPromises.length; index++) {
+    booksBuffers.push(await fetchPromises[index]);
   }
+  let bookNames = books.map((item) => {
+    return getBookName(item);
+  });
+
+  saveAs(
+    await zipFilesToBlob(booksBuffers, bookNames),
+    "KoodoReader-Book-" +
+      `${year}-${month <= 9 ? "0" + month : month}-${
+        day <= 9 ? "0" + day : day
+      }.zip`
+  );
 };
 export const getBookName = (item: Book) => {
   if (ConfigService.getReaderConfig("isExportOriginalName") === "yes") {
@@ -168,144 +106,6 @@ export const getBookName = (item: Book) => {
   }
   return item.name + `.${item.format.toLocaleLowerCase()}`;
 };
-
-// 生成单本书的图书包内容（ notes / highlights / words 均为该书已查询好的记录）
-// type 为 uint8array 时用于 Electron 大文件写盘，blob 用于 saveAs
-const buildBookPackageContent = async (
-  book: Book,
-  bookBuffer: ArrayBuffer,
-  notes: Note[],
-  words: DictHistory[],
-  type: "uint8array" | "blob"
-): Promise<Uint8Array | Blob> => {
-  const zip = new JSZip();
-  const bookName = getBookName(book);
-  zip.file(bookName, bookBuffer);
-  zip.file(
-    "notes.json",
-    JSON.stringify(mapNotesToExportData(notes.filter(isTextNote), [book]), null, 2)
-  );
-  zip.file(
-    "highlights.json",
-    JSON.stringify(
-      mapHighlightsToExportData(notes.filter(isHighlight), [book]),
-      null,
-      2
-    )
-  );
-  zip.file(
-    "words.json",
-    JSON.stringify(mapWordsToExportData(words, [book]), null, 2)
-  );
-  return zip.generateAsync({ type });
-};
-
-// 导出图书包：
-// - 单本：直接 saveAs 一个 .kdz
-// - 多本且 Electron 下总体积超阈值：选目录后逐本写 .kdz（仿照 exportBooks 大文件分支）
-// - 其余：多个 .kdz 打成一个 zip 后 saveAs
-export const exportBookPackage = async (
-  books: Book[]
-): Promise<ExportResult> => {
-  let totalSize = books.reduce((acc, book) => acc + book.size, 0);
-  if (isElectron && totalSize > 500 * 1024 * 1024) {
-    const ipcRenderer = window.electronAPI;
-    const fs = window.electronAPI.fs;
-    const path = window.electronAPI.path;
-    const exportPath = await ipcRenderer.invoke("select-path");
-    if (!exportPath) {
-      return "cancel";
-    }
-    toast.loading(i18n.t("Exporting..."), {
-      id: "exporting",
-    });
-    // 让 UI 有时间渲染 toast
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    let exportedSize = 0;
-    let failedCount = 0;
-    for (let i = 0; i < books.length; i++) {
-      try {
-        const book = books[i];
-        const bookBuffer = await fetchBookBuffer(book);
-        const [notes, words] = await fetchBookRecords(book);
-        const content = (await buildBookPackageContent(
-          book,
-          bookBuffer,
-          notes,
-          words,
-          "uint8array"
-        )) as Uint8Array;
-        const filePath = path.join(
-          exportPath,
-          sanitizeFileName(book.name) + ".kdz"
-        );
-        await new Promise((resolve, reject) => {
-          fs.writeFile(filePath, content, (err) => {
-            if (err) reject(err);
-            else resolve(null);
-          });
-        });
-        exportedSize += book.size;
-        const percent =
-          totalSize > 0
-            ? Math.min(100, Math.floor((exportedSize / totalSize) * 100))
-            : 100;
-        toast.loading(i18n.t("Exporting...") + ` ${percent}%`, {
-          id: "exporting",
-        });
-      } catch (error) {
-        console.error(`Failed to export book ${books[i].name}:`, error);
-        toast.error(i18n.t("Failed to export") + `: ${books[i].name}`, {
-          id: "exporting",
-        });
-        failedCount++;
-      }
-    }
-    toast.dismiss("exporting");
-    return failedCount < books.length ? "success" : "failed";
-  }
-
-  try {
-    toast.loading(i18n.t("Exporting..."), {
-      id: "exporting",
-    });
-    const contents: Uint8Array[] = [];
-    for (let i = 0; i < books.length; i++) {
-      const book = books[i];
-      const bookBuffer = await fetchBookBuffer(book);
-      const [notes, words] = await fetchBookRecords(book);
-      const content = (await buildBookPackageContent(
-        book,
-        bookBuffer,
-        notes,
-        words,
-        "uint8array"
-      )) as Uint8Array;
-      contents.push(content);
-    }
-    if (books.length === 1) {
-      const blob = new Blob([contents[0] as BlobPart], { type: KDZ_MIME });
-      saveAs(blob, sanitizeFileName(books[0].name) + ".kdz");
-    } else {
-      const zip = new JSZip();
-      books.forEach((book, index) => {
-        zip.file(sanitizeFileName(book.name) + ".kdz", contents[index]);
-      });
-      saveAs(
-        await zip.generateAsync({ type: "blob" }),
-        getZipFileName("Book", "kdz")
-      );
-    }
-    toast.dismiss("exporting");
-    return "success";
-  } catch (error) {
-    console.error("Failed to export book packages:", error);
-    toast.dismiss("exporting");
-    toast.error(i18n.t("Failed to export"), { id: "exporting" });
-    return "failed";
-  }
-};
 // 将内容字符串转为 Blob
 const toBlob = (content: string, format: string): Blob => {
   const mimeMap: Record<string, string> = {
@@ -313,7 +113,6 @@ const toBlob = (content: string, format: string): Blob => {
     txt: "text/plain,charset=UTF-8",
     html: "text/html,charset=UTF-8",
     csv: "text/csv,charset=UTF-8",
-    json: "application/json,charset=UTF-8",
   };
   return new Blob([content], { type: mimeMap[format] || "text/plain" });
 };
@@ -336,18 +135,20 @@ const sanitizeFileName = (name: string): string =>
 // 根据 format 将 data 转为文本内容
 const convertNotesData = (
   data: any[],
-  format: "csv" | "md" | "txt" | "html" | "json"
+  format: "csv" | "md" | "txt" | "html"
 ): string => {
   if (format === "md") return convertNotesToMarkdown(data);
   if (format === "txt") return convertNotesToTxt(data);
   if (format === "html") return convertNotesToHTML(data);
-  if (format === "json") return JSON.stringify(data, null, 2);
   return convertArrayToCSV(data);
 };
 
-// 将 notes 记录映射为标准导出格式（kdz 包与 JSON 导出共用）
-const mapNotesToExportData = (notes: Note[], books: Book[]): any[] =>
-  notes.map((item) => {
+export const exportNotes = async (
+  notes: Note[],
+  books: Book[],
+  format: "csv" | "md" | "txt" | "html" | "pdf" = "csv"
+) => {
+  let data = notes.map((item) => {
     let book = books.filter((subitem) => subitem.key === item.bookKey)[0];
     let bookName = book ? book.name : "Unknown book";
     let bookAuthor = book ? book.author : "Unknown author";
@@ -373,122 +174,96 @@ const mapNotesToExportData = (notes: Note[], books: Book[]): any[] =>
       styleType,
       bookName: bookName,
       bookAuthor: bookAuthor,
-      bookMd5: book ? book.md5 : "",
-      exportType: "note",
     };
   });
-
-export const exportNotes = async (
-  notes: Note[],
-  books: Book[],
-  format: ExportFormat = "csv"
-): Promise<ExportResult> => {
-  let data = mapNotesToExportData(notes, books);
-  const fileDate = getFileTimestamp();
+  const fileDate = `${year}-${month <= 9 ? "0" + month : month}-${
+    day <= 9 ? "0" + day : day
+  }`;
 
   // 涉及多本书时导出压缩包
   const bookNames = Object.keys(groupByBook(data));
   if (bookNames.length > 1 && format !== "pdf") {
-    try {
-      const zip = new JSZip();
-      // 全量文件
-      zip.file(`all.${format}`, convertNotesData(data, format));
-      // 每本书单独文件
-      const bookMap = groupByBook(data);
-      Object.entries(bookMap).forEach(([bookName, bookData]) => {
-        zip.file(
-          `${sanitizeFileName(bookName)}.${format}`,
-          convertNotesData(bookData, format)
-        );
-      });
-      saveAs(
-        await zip.generateAsync({ type: "blob" }),
-        getZipFileName("Note", format)
+    const zip = new JSZip();
+    // 全量文件
+    zip.file(`all.${format}`, convertNotesData(data, format));
+    // 每本书单独文件
+    const bookMap = groupByBook(data);
+    Object.entries(bookMap).forEach(([bookName, bookData]) => {
+      zip.file(
+        `${sanitizeFileName(bookName)}.${format}`,
+        convertNotesData(bookData, format)
       );
-      return "success";
-    } catch (error) {
-      console.error("Failed to export notes:", error);
-      return "failed";
-    }
+    });
+    saveAs(
+      await zip.generateAsync({ type: "blob" }),
+      `KoodoReader-Note-${fileDate}.zip`
+    );
+    return;
   }
 
   if (bookNames.length > 1 && format === "pdf") {
-    try {
-      const zip = new JSZip();
-      // 全量 PDF
-      const allPdfBlob = await generateHTMLAsPDFBlob(convertNotesToHTML(data));
-      zip.file("all.pdf", allPdfBlob);
-      // 每本书单独 PDF
-      const bookMap = groupByBook(data);
-      for (const [bookName, bookData] of Object.entries(bookMap)) {
-        const blob = await generateHTMLAsPDFBlob(convertNotesToHTML(bookData));
-        zip.file(`${sanitizeFileName(bookName)}.pdf`, blob);
-      }
-      saveAs(
-        await zip.generateAsync({ type: "blob" }),
-        getZipFileName("Note", format)
-      );
-      return "success";
-    } catch (error) {
-      console.error("Failed to export notes:", error);
-      return "failed";
+    const zip = new JSZip();
+    // 全量 PDF
+    const allPdfBlob = await generateHTMLAsPDFBlob(convertNotesToHTML(data));
+    zip.file("all.pdf", allPdfBlob);
+    // 每本书单独 PDF
+    const bookMap = groupByBook(data);
+    for (const [bookName, bookData] of Object.entries(bookMap)) {
+      const blob = await generateHTMLAsPDFBlob(convertNotesToHTML(bookData));
+      zip.file(`${sanitizeFileName(bookName)}.pdf`, blob);
     }
+    saveAs(
+      await zip.generateAsync({ type: "blob" }),
+      `KoodoReader-Note-${fileDate}.zip`
+    );
+    return;
   }
 
-  try {
-    if (format === "md") {
-      saveAs(
-        toBlob(convertNotesToMarkdown(data), "md"),
-        `KoodoReader-Note-${fileDate}.md`
-      );
-    } else if (format === "txt") {
-      saveAs(
-        toBlob(convertNotesToTxt(data), "txt"),
-        `KoodoReader-Note-${fileDate}.txt`
-      );
-    } else if (format === "html") {
-      saveAs(
-        toBlob(convertNotesToHTML(data), "html"),
-        `KoodoReader-Note-${fileDate}.html`
-      );
-    } else if (format === "pdf") {
-      await exportHTMLAsPDF(
-        convertNotesToHTML(data),
-        `KoodoReader-Note-${fileDate}.pdf`
-      );
-    } else if (format === "json") {
-      saveAs(
-        toBlob(JSON.stringify(data, null, 2), "json"),
-        `KoodoReader-Note-${fileDate}.json`
-      );
-    } else {
-      saveAs(
-        toBlob(convertArrayToCSV(data), "csv"),
-        `KoodoReader-Note-${fileDate}.csv`
-      );
-    }
-    return "success";
-  } catch (error) {
-    console.error("Failed to export notes:", error);
-    return "failed";
+  if (format === "md") {
+    saveAs(
+      toBlob(convertNotesToMarkdown(data), "md"),
+      `KoodoReader-Note-${fileDate}.md`
+    );
+  } else if (format === "txt") {
+    saveAs(
+      toBlob(convertNotesToTxt(data), "txt"),
+      `KoodoReader-Note-${fileDate}.txt`
+    );
+  } else if (format === "html") {
+    saveAs(
+      toBlob(convertNotesToHTML(data), "html"),
+      `KoodoReader-Note-${fileDate}.html`
+    );
+  } else if (format === "pdf") {
+    await exportHTMLAsPDF(
+      convertNotesToHTML(data),
+      `KoodoReader-Note-${fileDate}.pdf`
+    );
+  } else {
+    saveAs(
+      toBlob(convertArrayToCSV(data), "csv"),
+      `KoodoReader-Note-${fileDate}.csv`
+    );
   }
 };
 
 // 根据 format 将 data 转为文本内容
 const convertHighlightsData = (
   data: any[],
-  format: "csv" | "md" | "txt" | "html" | "json"
+  format: "csv" | "md" | "txt" | "html"
 ): string => {
   if (format === "md") return convertHighlightsToMarkdown(data);
   if (format === "txt") return convertHighlightsToTxt(data);
   if (format === "html") return convertHighlightsToHTML(data);
-  if (format === "json") return JSON.stringify(data, null, 2);
   return convertArrayToCSV(data);
 };
 
-// 将 highlights 记录映射为标准导出格式（kdz 包与 JSON 导出共用）
-const mapHighlightsToExportData = (highlights: Note[], books: Book[]): any[] =>
-  highlights.map((item) => {
+export const exportHighlights = async (
+  highlights: Note[],
+  books: Book[],
+  format: "csv" | "md" | "txt" | "html" | "pdf" = "csv"
+) => {
+  let data = highlights.map((item) => {
     let book = books.filter((subitem) => subitem.key === item.bookKey)[0];
     let bookName = book ? book.name : "Unknown book";
     let bookAuthor = book ? book.author : "Unknown author";
@@ -515,111 +290,85 @@ const mapHighlightsToExportData = (highlights: Note[], books: Book[]): any[] =>
       styleType,
       bookName: bookName,
       bookAuthor: bookAuthor,
-      bookMd5: book ? book.md5 : "",
-      exportType: "highlight",
     };
     const { notes, ...rest } = highlight;
     return rest;
   });
-
-export const exportHighlights = async (
-  highlights: Note[],
-  books: Book[],
-  format: ExportFormat = "csv"
-): Promise<ExportResult> => {
-  let data = mapHighlightsToExportData(highlights, books);
-  const fileDate = getFileTimestamp();
+  const fileDate = `${year}-${month <= 9 ? "0" + month : month}-${
+    day <= 9 ? "0" + day : day
+  }`;
 
   // 涉及多本书时导出压缩包
   const bookNames = Object.keys(groupByBook(data));
   if (bookNames.length > 1 && format !== "pdf") {
-    try {
-      const zip = new JSZip();
-      zip.file(`all.${format}`, convertHighlightsData(data, format));
-      const bookMap = groupByBook(data);
-      Object.entries(bookMap).forEach(([bookName, bookData]) => {
-        zip.file(
-          `${sanitizeFileName(bookName)}.${format}`,
-          convertHighlightsData(bookData, format)
-        );
-      });
-      saveAs(
-        await zip.generateAsync({ type: "blob" }),
-        getZipFileName("Highlight", format)
+    const zip = new JSZip();
+    zip.file(`all.${format}`, convertHighlightsData(data, format));
+    const bookMap = groupByBook(data);
+    Object.entries(bookMap).forEach(([bookName, bookData]) => {
+      zip.file(
+        `${sanitizeFileName(bookName)}.${format}`,
+        convertHighlightsData(bookData, format)
       );
-      return "success";
-    } catch (error) {
-      console.error("Failed to export highlights:", error);
-      return "failed";
-    }
+    });
+    saveAs(
+      await zip.generateAsync({ type: "blob" }),
+      `KoodoReader-Highlight-${fileDate}.zip`
+    );
+    return;
   }
 
   if (bookNames.length > 1 && format === "pdf") {
-    try {
-      const zip = new JSZip();
-      const allPdfBlob = await generateHTMLAsPDFBlob(
-        convertHighlightsToHTML(data)
+    const zip = new JSZip();
+    const allPdfBlob = await generateHTMLAsPDFBlob(
+      convertHighlightsToHTML(data)
+    );
+    zip.file("all.pdf", allPdfBlob);
+    const bookMap = groupByBook(data);
+    for (const [bookName, bookData] of Object.entries(bookMap)) {
+      const blob = await generateHTMLAsPDFBlob(
+        convertHighlightsToHTML(bookData)
       );
-      zip.file("all.pdf", allPdfBlob);
-      const bookMap = groupByBook(data);
-      for (const [bookName, bookData] of Object.entries(bookMap)) {
-        const blob = await generateHTMLAsPDFBlob(
-          convertHighlightsToHTML(bookData)
-        );
-        zip.file(`${sanitizeFileName(bookName)}.pdf`, blob);
-      }
-      saveAs(
-        await zip.generateAsync({ type: "blob" }),
-        getZipFileName("Highlight", format)
-      );
-      return "success";
-    } catch (error) {
-      console.error("Failed to export highlights:", error);
-      return "failed";
+      zip.file(`${sanitizeFileName(bookName)}.pdf`, blob);
     }
+    saveAs(
+      await zip.generateAsync({ type: "blob" }),
+      `KoodoReader-Highlight-${fileDate}.zip`
+    );
+    return;
   }
 
-  try {
-    if (format === "md") {
-      saveAs(
-        toBlob(convertHighlightsToMarkdown(data), "md"),
-        `KoodoReader-Highlight-${fileDate}.md`
-      );
-    } else if (format === "txt") {
-      saveAs(
-        toBlob(convertHighlightsToTxt(data), "txt"),
-        `KoodoReader-Highlight-${fileDate}.txt`
-      );
-    } else if (format === "html") {
-      saveAs(
-        toBlob(convertHighlightsToHTML(data), "html"),
-        `KoodoReader-Highlight-${fileDate}.html`
-      );
-    } else if (format === "pdf") {
-      await exportHTMLAsPDF(
-        convertHighlightsToHTML(data),
-        `KoodoReader-Highlight-${fileDate}.pdf`
-      );
-    } else if (format === "json") {
-      saveAs(
-        toBlob(JSON.stringify(data, null, 2), "json"),
-        `KoodoReader-Highlight-${fileDate}.json`
-      );
-    } else {
-      saveAs(
-        toBlob(convertArrayToCSV(data), "csv"),
-        `KoodoReader-Highlight-${fileDate}.csv`
-      );
-    }
-    return "success";
-  } catch (error) {
-    console.error("Failed to export highlights:", error);
-    return "failed";
+  if (format === "md") {
+    saveAs(
+      toBlob(convertHighlightsToMarkdown(data), "md"),
+      `KoodoReader-Highlight-${fileDate}.md`
+    );
+  } else if (format === "txt") {
+    saveAs(
+      toBlob(convertHighlightsToTxt(data), "txt"),
+      `KoodoReader-Highlight-${fileDate}.txt`
+    );
+  } else if (format === "html") {
+    saveAs(
+      toBlob(convertHighlightsToHTML(data), "html"),
+      `KoodoReader-Highlight-${fileDate}.html`
+    );
+  } else if (format === "pdf") {
+    await exportHTMLAsPDF(
+      convertHighlightsToHTML(data),
+      `KoodoReader-Highlight-${fileDate}.pdf`
+    );
+  } else {
+    saveAs(
+      toBlob(convertArrayToCSV(data), "csv"),
+      `KoodoReader-Highlight-${fileDate}.csv`
+    );
   }
 };
-// 将查词历史映射为标准导出格式（kdz 包与 JSON 导出共用）
-const mapWordsToExportData = (dictHistory: DictHistory[], books: Book[]): any[] =>
-  dictHistory.map((item) => {
+export const exportDictionaryHistory = (
+  dictHistory: DictHistory[],
+  books: Book[]
+) => {
+  let data = dictHistory.map((item) => {
     let book = books.filter((subitem) => subitem.key === item.bookKey)[0];
     let bookName = book ? book.name : "Unknown book";
     let bookAuthor = book ? book.author : "Unknown author";
@@ -631,31 +380,17 @@ const mapWordsToExportData = (dictHistory: DictHistory[], books: Book[]): any[] 
       sentence: item.sentence || "",
       bookName: bookName,
       bookAuthor: bookAuthor,
-      bookMd5: book ? book.md5 : "",
-      exportType: "dictionaryHistory",
     };
     return history;
   });
 
-export const exportDictionaryHistory = async (
-  dictHistory: DictHistory[],
-  books: Book[],
-  format: "csv" | "json" = "csv"
-): Promise<ExportResult> => {
-  let data = mapWordsToExportData(dictHistory, books);
-
-  try {
-    saveAs(
-      format === "json"
-        ? toBlob(JSON.stringify(data, null, 2), "json")
-        : new Blob([convertArrayToCSV(data)], { type: "text/csv,charset=UTF-8" }),
-      `KoodoReader-Dictionary-History-${getFileTimestamp()}.${format}`
-    );
-    return "success";
-  } catch (error) {
-    console.error("Failed to export dictionary history:", error);
-    return "failed";
-  }
+  saveAs(
+    new Blob([convertArrayToCSV(data)], { type: "text/csv,charset=UTF-8" }),
+    "KoodoReader-Dictionary-History-" +
+      `${year}-${month <= 9 ? "0" + month : month}-${
+        day <= 9 ? "0" + day : day
+      }.csv`
+  );
 };
 export const convertArrayToCSV = (array) => {
   let csvContent = "\ufeff";

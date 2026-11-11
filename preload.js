@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, webUtils } = require("electron");
+const { contextBridge, ipcRenderer } = require("electron");
 
 const INVOKE_CHANNELS = new Set([
   "cancel-download-app",
@@ -8,8 +8,6 @@ const INVOKE_CHANNELS = new Set([
   "open-book",
   "generate-tts",
   "get-tts-voices",
-  "get-cached-tts",
-  "save-tts-audio",
   "cloud-upload",
   "cloud-download",
   "cloud-progress",
@@ -23,11 +21,8 @@ const INVOKE_CHANNELS = new Set([
   "cloud-exist",
   "cloud-close",
   "clear-tts",
-  "clear-temp-cache",
-  "get-cache-size",
   "select-path",
   "select-file",
-  "select-import-file",
   "encrypt-data",
   "decrypt-data",
   "check-cloud-url",
@@ -52,10 +47,6 @@ const INVOKE_CHANNELS = new Set([
   "open-explorer-folder",
   "get-debug-logs",
   "hide-reader",
-  "reader-window-minimize",
-  "reader-window-toggle-maximize",
-  "reader-window-get-state",
-  "reader-window-close",
   "open-console",
   "reload-reader",
   "reload-main",
@@ -65,7 +56,6 @@ const INVOKE_CHANNELS = new Set([
   "reload-tab",
   "adjust-tab-size",
   "exit-tab",
-  "exit-reader",
   "enter-tab-fullscreen",
   "exit-tab-fullscreen",
   "enter-fullscreen",
@@ -81,16 +71,8 @@ const INVOKE_CHANNELS = new Set([
   "crypto-file-md5",
   "backup-path",
   "restore-path",
-  "list-tar-file",
-  "untar-file",
-  "list-zip-file",
-  "unzip-file",
 ]);
-const SEND_CHANNELS = new Set([
-  "reader-close-ready",
-  "tab-close-ready",
-  "reader-mouse-watch",
-]);
+const SEND_CHANNELS = new Set(["reader-close-ready", "tab-close-ready"]);
 const SEND_SYNC_CHANNELS = new Set([
   "storage-location",
   "url-window-status",
@@ -106,8 +88,6 @@ const EVENT_CHANNELS = new Set([
   "oauth-callback",
   "before-reader-close",
   "before-tab-close",
-  "reader-window-state",
-  "reader-mouse-leave",
   "reading-finished",
   "chat-message",
   "import-url-from-link",
@@ -280,8 +260,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   on: (channel, listener) => listen(channel, listener),
   once: (channel, listener) => listen(channel, listener, true),
   removeListener,
-  // Electron 32+ 移除了 File.path，拖拽导入需经此取回真实磁盘路径
-  getPathForFile: (file) => webUtils.getPathForFile(file),
   fs: file,
   path: pathApi,
   os: {

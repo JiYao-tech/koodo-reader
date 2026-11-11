@@ -1,130 +1,146 @@
-import { useTranslation } from "react-i18next";
-import { useState } from "react";
+import React from "react";
+import { SettingInfoProps, SettingInfoState } from "./interface";
 import { Trans } from "react-i18next";
 import { isElectron } from "react-device-detect";
 import toast from "react-hot-toast";
 import { ConfigService } from "../../../assets/lib/kookit-extra-browser.min";
 import { readingSettingList } from "../../../constants/settingList";
-import SwitchRow from "../../../components/readerSettings/switchRow";
-import { useAppStore } from "../../../store/useAppStore";
-
-export interface SettingInfoState {
-  isTouch: boolean;
-  isPreventTrigger: boolean;
-  isMergeWord: boolean;
-  isOpenBook: boolean;
-  isDisablePopup: boolean;
-  isDisableAutoScroll: boolean;
-  isManualScroll: boolean;
-
-  isOpenInMain: boolean;
-
-  isOverwriteLink: boolean;
-  isOverwriteText: boolean;
-  isOverwriteBackground: boolean;
-  isAutoFullscreen: boolean;
-  isAutoMaximize: boolean;
-}
-
 declare var window: any;
 
-const ReadingSetting = () => {
-  const isAuthed = useAppStore((s) => s.manager.isAuthed);
-  const handleSetting = useAppStore((s) => s.handleSetting);
-  const handleSettingMode = useAppStore((s) => s.handleSettingMode);
-  const handleMergeWord = useAppStore((s) => s.handleMergeWord);
-  const { t } = useTranslation();
-  const [state, setState] = useState<Record<string, boolean>>({
-    isTouch: ConfigService.getReaderConfig("isTouch") === "yes",
-    isMergeWord: ConfigService.getReaderConfig("isMergeWord") === "yes",
-    isPreventTrigger:
-      ConfigService.getReaderConfig("isPreventTrigger") === "yes",
-    isAutoFullscreen:
-      ConfigService.getReaderConfig("isAutoFullscreen") === "yes",
-    isAutoMaximize: ConfigService.getReaderConfig("isAutoMaximize") === "yes",
-    isOpenBook: ConfigService.getReaderConfig("isOpenBook") === "yes",
-    isDisablePopup: ConfigService.getReaderConfig("isDisablePopup") === "yes",
-    isManualScroll: ConfigService.getReaderConfig("isManualScroll") === "yes",
-    isDisableAutoScroll:
-      ConfigService.getReaderConfig("isDisableAutoScroll") === "yes",
-    isOpenInMain: ConfigService.getReaderConfig("isOpenInMain") === "yes",
-    isOverwriteText:
-      ConfigService.getReaderConfig("isOverwriteText") === "yes",
-    isOverwriteLink:
-      ConfigService.getReaderConfig("isOverwriteLink") === "yes",
-    isOverwriteBackground:
-      ConfigService.getReaderConfig("isOverwriteBackground") === "yes",
-  });
+class ReadingSetting extends React.Component<
+  SettingInfoProps,
+  SettingInfoState
+> {
+  constructor(props: SettingInfoProps) {
+    super(props);
+    this.state = {
+      isTouch: ConfigService.getReaderConfig("isTouch") === "yes",
+      isMergeWord: ConfigService.getReaderConfig("isMergeWord") === "yes",
+      isPreventTrigger:
+        ConfigService.getReaderConfig("isPreventTrigger") === "yes",
+      isAutoFullscreen:
+        ConfigService.getReaderConfig("isAutoFullscreen") === "yes",
+      isPreventAdd: ConfigService.getReaderConfig("isPreventAdd") === "yes",
+      isAutoMaximize: ConfigService.getReaderConfig("isAutoMaximize") === "yes",
+      isLemmatizeWord:
+        ConfigService.getReaderConfig("isLemmatizeWord") === "yes",
+      isOpenBook: ConfigService.getReaderConfig("isOpenBook") === "yes",
+      isDisablePopup: ConfigService.getReaderConfig("isDisablePopup") === "yes",
+      isManualScroll: ConfigService.getReaderConfig("isManualScroll") === "yes",
+      isDisableAutoScroll:
+        ConfigService.getReaderConfig("isDisableAutoScroll") === "yes",
+      isDisableTrashBin:
+        ConfigService.getReaderConfig("isDisableTrashBin") === "yes",
+      isDeleteShelfBook:
+        ConfigService.getReaderConfig("isDeleteShelfBook") === "yes",
+      isHideShelfBook:
+        ConfigService.getReaderConfig("isHideShelfBook") === "yes",
+      isPreventSleep: ConfigService.getReaderConfig("isPreventSleep") === "yes",
+      isOpenInMain: ConfigService.getReaderConfig("isOpenInMain") === "yes",
+      isPrecacheBook: ConfigService.getReaderConfig("isPrecacheBook") === "yes",
+      isOverwriteText:
+        ConfigService.getReaderConfig("isOverwriteText") === "yes",
+      isOverwriteLink:
+        ConfigService.getReaderConfig("isOverwriteLink") === "yes",
+      isOverwriteBackground:
+        ConfigService.getReaderConfig("isOverwriteBackground") === "yes",
+    };
+  }
 
-  const handleRest = (_bool: boolean) => {
-    toast.success(t("Change successful"));
+  handleRest = (_bool: boolean) => {
+    toast.success(this.props.t("Change successful"));
   };
 
-  const handleToggleSetting = (stateName: string) => {
-    if (stateName === "isLemmatizeWord" && !isAuthed) {
-      toast.error(t("Please upgrade to Pro to use this feature"));
-      handleSetting(true);
-      handleSettingMode("account");
+  handleSetting = (stateName: string) => {
+    if (stateName === "isLemmatizeWord" && !this.props.isAuthed) {
+      toast.error(this.props.t("Please upgrade to Pro to use this feature"));
+      this.props.handleSetting(true);
+      this.props.handleSettingMode("account");
       return;
     }
-    setState((prev) => ({ ...prev, [stateName]: !prev[stateName] }));
-    ConfigService.setReaderConfig(stateName, state[stateName] ? "no" : "yes");
-    handleRest(state[stateName]);
-  };
-
-  const handleResetReaderPosition = () => {
-    window.electronAPI.invoke("reset-reader-position", "ping");
-    toast.success(t("Reset successful"));
-  };
-
-  const handleMergeWordToggle = () => {
-    if (state.isOpenInMain && !state.isMergeWord) {
-      toast(t("Please turn off open books in the main window"));
-      return;
-    }
-    if (state.isAutoFullscreen && !state.isMergeWord) {
-      toast(t("Please turn off auto open book in full screen"));
-      return;
-    }
-    handleToggleSetting("isMergeWord");
-    handleMergeWord(
-      ConfigService.getReaderConfig("isMergeWord") === "yes"
+    this.setState({ [stateName]: !this.state[stateName] } as any);
+    ConfigService.setReaderConfig(
+      stateName,
+      this.state[stateName] ? "no" : "yes"
     );
+    this.handleRest(this.state[stateName]);
   };
 
-  const handleOpenInMain = () => {
-    if (state.isMergeWord && !state.isOpenInMain) {
-      toast(t("Please turn off merge with word first"));
+  handleResetReaderPosition = () => {
+    window
+      .electronAPI
+      .invoke("reset-reader-position", "ping");
+    toast.success(this.props.t("Reset successful"));
+  };
+
+  handleMergeWord = () => {
+    if (this.state.isOpenInMain && !this.state.isMergeWord) {
+      toast(this.props.t("Please turn off open books in the main window"));
       return;
     }
-    handleToggleSetting("isOpenInMain");
+    if (this.state.isAutoFullscreen && !this.state.isMergeWord) {
+      toast(this.props.t("Please turn off auto open book in full screen"));
+      return;
+    }
+    this.handleSetting("isMergeWord");
+    if (ConfigService.getReaderConfig("isMergeWord") === "yes") {
+      ConfigService.setReaderConfig("isHideBackground", "yes");
+    }
   };
 
-  const renderSwitchOption = (optionList: any[]) => {
+  handleOpenInMain = () => {
+    if (this.state.isMergeWord && !this.state.isOpenInMain) {
+      toast(this.props.t("Please turn off merge with word first"));
+      return;
+    }
+    this.handleSetting("isOpenInMain");
+  };
+
+  renderSwitchOption = (optionList: any[]) => {
     return optionList.map((item) => {
       return (
         <div
           style={item.isElectron ? (isElectron ? {} : { display: "none" }) : {}}
           key={item.propName}
         >
-          <SwitchRow
-            variant="setting"
-            title={<Trans>{item.title}</Trans>}
-            isEnabled={state[item.propName]}
-            onClick={() => {
-              switch (item.propName) {
-                case "isMergeWord":
-                  handleMergeWordToggle();
-                  break;
-                case "isOpenInMain":
-                  handleOpenInMain();
-                  break;
-                default:
-                  handleToggleSetting(item.propName);
-                  break;
-              }
-            }}
-          />
+          <div className="setting-dialog-new-title" key={item.title}>
+            <span style={{ width: "calc(100% - 100px)" }}>
+              <Trans>{item.title}</Trans>
+            </span>
+
+            <span
+              className="single-control-switch"
+              onClick={() => {
+                switch (item.propName) {
+                  case "isMergeWord":
+                    this.handleMergeWord();
+                    break;
+                  case "isOpenInMain":
+                    this.handleOpenInMain();
+                    break;
+                  default:
+                    this.handleSetting(item.propName);
+                    break;
+                }
+              }}
+              style={this.state[item.propName] ? {} : { opacity: 0.6 }}
+            >
+              <span
+                className="single-control-button"
+                style={
+                  this.state[item.propName]
+                    ? {
+                        transform: "translateX(20px)",
+                        transition: "transform 0.5s ease",
+                      }
+                    : {
+                        transform: "translateX(0px)",
+                        transition: "transform 0.5s ease",
+                      }
+                }
+              ></span>
+            </span>
+          </div>
           <p className="setting-option-subtitle">
             <Trans>{item.desc}</Trans>
           </p>
@@ -133,27 +149,29 @@ const ReadingSetting = () => {
     });
   };
 
-  return (
-    <>
-      {renderSwitchOption(readingSettingList)}
-      {isElectron && (
-        <>
-          <div className="setting-dialog-new-title">
-            <Trans>Reset reader window's position</Trans>
+  render() {
+    return (
+      <>
+        {this.renderSwitchOption(readingSettingList)}
+        {isElectron && (
+          <>
+            <div className="setting-dialog-new-title">
+              <Trans>Reset reader window's position</Trans>
 
-            <span
-              className="change-location-button"
-              onClick={() => {
-                handleResetReaderPosition();
-              }}
-            >
-              <Trans>Reset</Trans>
-            </span>
-          </div>
-        </>
-      )}
-    </>
-  );
-};
+              <span
+                className="change-location-button"
+                onClick={() => {
+                  this.handleResetReaderPosition();
+                }}
+              >
+                <Trans>Reset</Trans>
+              </span>
+            </div>
+          </>
+        )}
+      </>
+    );
+  }
+}
 
 export default ReadingSetting;

@@ -3,15 +3,9 @@ import PluginModel from "../../models/Plugin";
 import { getAllVoices, getFormatFromAudioPath } from "../common";
 import { getTTSAudio } from "../request/reader";
 import { isElectron } from "react-device-detect";
-import { TextRule } from "../common";
-
-const escapeRegExp = (pattern: string) =>
-  pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 class TTSUtil {
   static player: any;
-  // 听书文本规则（replace / delete），朗读前应用到文本
-  static textRules: TextRule[] = [];
   static audioPaths: { index: number; audioPath: string }[] = [];
   static isPaused: boolean = false;
   static pausedMidSentence: boolean = false;
@@ -221,12 +215,16 @@ class TTSUtil {
       this.player.stop();
       this.isPaused = true;
       this.pausedMidSentence = false;
-      // 仅清理内存缓存，磁盘上的 tts 目录保留供跨会话复用
       setTimeout(() => {
+        this.clearAudioPaths();
         this.audioPaths = [];
         this.processingIndexes.clear();
       }, 1000);
     }
+  }
+  static async clearAudioPaths() {
+    if (!isElectron) return;
+    window.electronAPI.invoke("clear-tts");
   }
   static getAudioPaths() {
     return this.audioPaths;
@@ -239,41 +237,7 @@ class TTSUtil {
     voice,
     isFirst: boolean
   ) {
-    // 朗读前应用文本替换 / 删除规则
-    text = this.applyTextRules(text);
     if (voiceEngine === "official-ai-voice-plugin") {
-      // 内容哈希：相同文本/语速/音色命中同一文件，跨会话复用（与 expo 端 key 设计一致）
-      const audioKeyPayload = {
-        text,
-        speed,
-        voiceIdentifier: `official-ai-${voice.language}-${voice.name}`,
-      };
-      if (isElectron) {
-        // Electron：音频持久缓存到 dirPath/tts 目录，命中本地缓存直接复用
-        let cached = await window.electronAPI.invoke(
-          "get-cached-tts",
-          audioKeyPayload
-        );
-        if (cached && cached.audioPath) {
-          return cached.audioPath;
-        }
-        let res = await getTTSAudio(
-          text,
-          voice.language,
-          voice.name,
-          (speed + 100) / 100,
-          1.0,
-          isFirst
-        );
-        if (res && res.data && res.data.audio_base64) {
-          return await window.electronAPI.invoke("save-tts-audio", {
-            key: cached && cached.key,
-            base64: res.data.audio_base64,
-          });
-        }
-        return "";
-      }
-      // 浏览器：保留 base64 数据 URI 播放
       let res = await getTTSAudio(
         text,
         voice.language,
@@ -287,19 +251,14 @@ class TTSUtil {
       }
       return "";
     } else {
-      const payload: Record<string, unknown> = {
-        text: text,
-        speed,
-        pluginKey: plugin.key,
-        config: voice.config,
-      };
-      if (plugin.script) {
-        payload.script = plugin.script;
-        if (plugin.scriptSHA256) {
-          payload.scriptSHA256 = plugin.scriptSHA256;
-        }
-      }
-      let audioPath = await window.electronAPI.invoke("generate-tts", payload);
+      let audioPath = await window
+        .electronAPI
+        .invoke("generate-tts", {
+          text: text,
+          speed,
+          pluginKey: plugin.key,
+          config: voice.config,
+        });
       return audioPath;
     }
   }
@@ -315,39 +274,6 @@ class TTSUtil {
     let voices = getAllVoices(plugins);
 
     return voices;
-  }
-  // 设置听书文本规则（仅 replace / delete 生效）
-  static setTextRules(rules: TextRule[]) {
-    this.textRules = rules.filter(
-      (rule) => rule.type === "replace" || rule.type === "delete"
-    );
-  }
-  // 对文本应用替换 / 删除规则
-  static applyTextRules(text: string): string {
-    if (!text || this.textRules.length === 0) return text;
-    let result = text;
-    for (const rule of this.textRules) {
-      try {
-        const regex =
-          rule.matchType === "regex"
-            ? new RegExp(rule.pattern, "g")
-            : new RegExp(escapeRegExp(rule.pattern), "g");
-        if (rule.type === "delete") {
-          result = result.replace(regex, "");
-        } else {
-          // regex 模式保留 $1 分组引用（由 String.replace 原生处理）；
-          // plain 模式转义 $ 防止被解释为分组引用
-          const replacement =
-            rule.matchType === "regex"
-              ? rule.replacement || ""
-              : (rule.replacement || "").replace(/\$/g, "$$$$");
-          result = result.replace(regex, replacement);
-        }
-      } catch (e) {
-        console.error("Invalid text rule pattern:", rule.pattern, e);
-      }
-    }
-    return result;
   }
 }
 export default TTSUtil;

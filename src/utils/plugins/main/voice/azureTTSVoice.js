@@ -1,23 +1,21 @@
 const path = require("path");
 const fs = require("fs");
 const axios = require("axios");
-const { getTTSAudioPath, ensureTTSDir } = require("./ttsCache");
 const getAudioPath = async (text, speed, dirPath, config) => {
-  const audioPath = getTTSAudioPath(
-    "azure-tts-voice-plugin",
-    text,
-    speed,
-    config,
-    dirPath,
-    ".mp3"
-  );
-  // 命中内容哈希缓存则直接复用，不再请求 TTS 接口
-  if (fs.existsSync(audioPath)) {
-    return audioPath;
+  let audioName = new Date().getTime() + ".mp3";
+  if (!fs.existsSync(path.join(dirPath, "tts"))) {
+    fs.mkdirSync(path.join(dirPath, "tts"));
+    fs.writeFileSync(
+      path.join(dirPath, "tts", audioName),
+      await getTTSAudio(text, speed, config)
+    );
+  } else {
+    fs.writeFileSync(
+      path.join(dirPath, "tts", audioName),
+      await getTTSAudio(text, speed, config)
+    );
   }
-  ensureTTSDir(dirPath);
-  fs.writeFileSync(audioPath, await getTTSAudio(text, speed, config));
-  return audioPath;
+  return path.join(dirPath, "tts", audioName);
 };
 const getTTSAudio = async (text, speed, config) => {
   let region = config.region || "eastus";
@@ -43,7 +41,7 @@ const getTTSAudio = async (text, speed, config) => {
         resolve(response.data);
       })
       .catch((error) => {
-        reject(error);
+        reject("");
       });
   });
 };
@@ -77,7 +75,7 @@ const getTTSVoice = async (config) => {
         );
       })
       .catch((error) => {
-        reject(error);
+        reject("");
       });
   });
 };

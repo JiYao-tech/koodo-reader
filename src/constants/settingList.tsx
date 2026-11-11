@@ -74,12 +74,6 @@ export const generalSettingList = [
     propName: "isUseOriginalName",
   },
   {
-    isElectron: false,
-    title: "Recognize book title and author with AI on import",
-    desc: "When importing books, if no book title is parsed from the book metadata, AI will be used to recognize the book title and author",
-    propName: "isAIAnalyzeTitle",
-  },
-  {
     isElectron: true,
     title: "Disable update notification",
     propName: "isDisableUpdate",
@@ -513,106 +507,84 @@ export const skinList = [
 
 export const readerSettingList = [
   {
-    title: "Right-to-left page turning",
-    propName: "isRevertDirection",
-    group: "layout",
-    isPDF: true,
-  },
-  {
     title: "Render PDF from even page",
     propName: "isStartFromEven",
-    group: "layout",
-    isPDF: true,
-  },
-  {
-    title: "Show total page number (Experimental)",
-    propName: "isShowTotalPage",
-    group: "more",
     isPDF: true,
   },
   {
     title: "Allow Javascript in the books",
     propName: "isAllowScript",
-    group: "more",
     isPDF: false,
   },
   {
     title: "Enable hyphenation",
     propName: "isHyphenation",
-    group: "layout",
     isPDF: false,
   },
   {
     title: "Keep the original background in PDFs",
     propName: "isKeepPDFBackground",
-    group: "theme",
     isPDF: true,
   },
   {
     title: "Allow orphan and widow lines",
     propName: "isOrphanWidow",
-    group: "layout",
+    isPDF: false,
+  },
+  {
+    title: "Fast reading mode (make the first half of the word bold)",
+    propName: "isBionic",
     isPDF: false,
   },
   {
     title: "Text indentation",
     propName: "isIndent",
-    group: "layout",
     isPDF: false,
   },
   {
     title: "Bold",
     propName: "isBold",
-    group: "font",
     isPDF: false,
   },
   {
     title: "Italic",
     propName: "isItalic",
-    group: "font",
     isPDF: false,
   },
   {
     title: "Underline",
     propName: "isUnderline",
-    group: "font",
     isPDF: false,
   },
   {
     title: "Shadow",
     propName: "isShadow",
-    group: "font",
     isPDF: false,
   },
   {
     title: "Invert color",
     propName: "isInvert",
-    group: "theme",
     isPDF: true,
   },
   {
     title: "Show page border",
     propName: "isShowPageBorder",
-    group: "layout",
     isPDF: true,
   },
   {
     title: "Hide footer",
     propName: "isHideFooter",
-    group: "layout",
     isPDF: true,
   },
 
   {
     title: "Hide header",
     propName: "isHideHeader",
-    group: "layout",
     isPDF: true,
   },
   {
     title: "Hide mimical background",
     propName: "isHideBackground",
-    group: "theme",
     isPDF: true,
   },
 ];
@@ -715,6 +687,11 @@ export const officialDictList = [
   { lang: "Automatic", code: "auto", nativeLang: "Automatic" },
   { lang: "English", code: "eng", nativeLang: "English" },
   { lang: "Simplified Chinese", code: "chs", nativeLang: "Simplified Chinese" },
+  {
+    lang: "Traditional Chinese",
+    code: "cht",
+    nativeLang: "Traditional Chinese",
+  },
   { lang: "Japanese", code: "jpn", nativeLang: "Japanese" },
   { lang: "Korean", code: "kor", nativeLang: "Korean" },
   { lang: "French", code: "fra", nativeLang: "French" },

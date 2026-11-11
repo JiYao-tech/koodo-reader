@@ -1,4 +1,4 @@
-import { getOuterDoc } from "./docUtil";
+import { getIframeDoc } from "./docUtil";
 import { ConfigService } from "../../assets/lib/kookit-extra-browser.min";
 import { applyThemeColor, removeThemeColor } from "./themeUtil";
 import { StyleHelper } from "../../assets/lib/kookit.min";
@@ -7,7 +7,7 @@ import FontUtil from "../file/fontUtil";
 class styleUtil {
   // add default css for iframe
   static addDefaultCss(bookKey: string) {
-    let doc = getOuterDoc();
+    let doc = getIframeDoc("ANY")[0];
     if (!doc) return;
     if (!doc.head) {
       return;

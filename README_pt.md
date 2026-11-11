@@ -43,12 +43,7 @@
   - Texto puro (**.txt**)
   - FictionBook (**.fb2**)
   - Arquivo de quadrinhos (**.cbr**, **.cbz**, **.cbt**, **.cb7**)
-  - Apresentação do PowerPoint (**.pptx**, **.ppt**)
-  - Documento XPS (**.xps**, **.oxps**)
-  - Documento DjVu (**.djvu**, **.djv**)
-  - Documento OFD (**.ofd**)
-  - Documento CAJ (**.caj**, convertido em PDF na importação)
-  - Texto rico (**.md**, **.docx**, **.doc**, **.rtf**)
+  - Texto rico (**.md**, **.docx**)
   - Hiper texto (**.html**, **.xml**, **.xhtml**, **.mhtml**, **.htm**)
 - Plataformas suportadas: **Windows**, **macOS**, **Linux** e **Web**
 - Guarde seus dados no **OneDrive**, **Google Drive**, **Dropbox**, **iCloud**, **Yandex Disk**, **FTP**, **SFTP**, **WebDAV**, **SMB**, **S3**, **S3 Compatible**

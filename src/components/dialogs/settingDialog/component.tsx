@@ -1,6 +1,6 @@
-import { useEffect, useRef } from "react";
+import React from "react";
 import "./settingDialog.css";
-import { useAppStore } from "../../../store/useAppStore";
+import { SettingInfoProps, SettingInfoState } from "./interface";
 import { Trans } from "react-i18next";
 import GeneralSetting from "../../../containers/settings/generalSetting";
 import SyncSetting from "../../../containers/settings/syncSetting";
@@ -19,41 +19,40 @@ import DictSetting from "../../../containers/settings/dictSetting";
 import MoreSetting from "../../../containers/settings/moreSetting";
 import ShortcutSetting from "../../../containers/settings/shortcutSetting";
 import { isElectron } from "react-device-detect";
-const SettingDialog = () => {
-  const settingMode = useAppStore((s) => s.manager.settingMode);
-  const handleSetting = useAppStore((s) => s.handleSetting);
-  const handleFetchPlugins = useAppStore((s) => s.handleFetchPlugins);
-  const handleFetchDataSourceList = useAppStore(
-    (s) => s.handleFetchDataSourceList
-  );
-  const handleFetchDefaultSyncOption = useAppStore(
-    (s) => s.handleFetchDefaultSyncOption
-  );
-  const handleSettingMode = useAppStore((s) => s.handleSettingMode);
-  const contentRef = useRef<HTMLDivElement>(null);
+class SettingDialog extends React.Component<
+  SettingInfoProps,
+  SettingInfoState
+> {
+  contentRef = React.createRef<HTMLDivElement>();
 
-  useEffect(() => {
-    handleFetchPlugins();
-    handleFetchDataSourceList();
-    handleFetchDefaultSyncOption();
-  }, []);
+  constructor(props: SettingInfoProps) {
+    super(props);
+    this.state = {};
+  }
+  componentDidMount(): void {
+    this.props.handleFetchPlugins();
+    this.props.handleFetchDataSourceList();
+    this.props.handleFetchDefaultSyncOption();
+  }
 
-  useEffect(() => {
-    contentRef.current?.scrollTo(0, 0);
-  }, [settingMode]);
+  componentDidUpdate(prevProps: SettingInfoProps): void {
+    if (prevProps.settingMode !== this.props.settingMode) {
+      this.contentRef.current?.scrollTo(0, 0);
+    }
+  }
 
-  const renderSidebarItem = (
+  renderSidebarItem = (
     mode: string,
     iconClass: string,
     labelKey: string,
     fontSize: string
   ) => {
-    const isActive = settingMode === mode;
+    const isActive = this.props.settingMode === mode;
     return (
       <div
         className={"setting-dialog-sidebar-item" + (isActive ? " active" : "")}
         onClick={() => {
-          handleSettingMode(mode);
+          this.props.handleSettingMode(mode);
         }}
       >
         <span
@@ -65,8 +64,8 @@ const SettingDialog = () => {
     );
   };
 
-  const getCurrentPageTitle = () => {
-    switch (settingMode) {
+  getCurrentPageTitle = () => {
+    switch (this.props.settingMode) {
       case "general":
         return "General";
       case "reading":
@@ -102,85 +101,86 @@ const SettingDialog = () => {
     }
   };
 
-  return (
+  render() {
+    return (
       <div className="setting-dialog-container">
-        {/* Left sidebar */}
+        {/* 左侧导航栏 */}
         <div className="setting-dialog-sidebar">
           <div className="setting-dialog-sidebar-title">
             <Trans>Setting</Trans>
           </div>
 
-          {/* First group */}
+          {/* 第一组 */}
           <div className="setting-dialog-sidebar-group">
-            {renderSidebarItem("account", "icon-user", "Account", "18px")}
-            {renderSidebarItem("general", "icon-setting", "General", "")}
-            {renderSidebarItem("data", "icon-archive", "Data", "15px")}
-            {renderSidebarItem(
+            {this.renderSidebarItem("general", "icon-setting", "General", "")}
+            {this.renderSidebarItem("data", "icon-archive", "Data", "15px")}
+            {this.renderSidebarItem(
               "reading",
               "icon-bookshelf-line",
               "Reading",
               ""
             )}
-            {renderSidebarItem(
+            {this.renderSidebarItem(
               "shortcut",
               "icon-keyboard",
               "Shortcuts",
               ""
             )}
-            {renderSidebarItem(
+            {this.renderSidebarItem(
               "appearance",
               "icon-highlight-line",
               "Appearance",
               "20px"
             )}
 
-            {renderSidebarItem("sync", "icon-sync", "Sync and backup", "")}
-            {renderSidebarItem(
+            {this.renderSidebarItem("sync", "icon-sync", "Sync and backup", "")}
+            {this.renderSidebarItem(
               "more",
               "icon-more",
               "More settings",
               "13px"
             )}
-            {renderSidebarItem("about", "icon-detail", "About", "18px")}
+            {this.renderSidebarItem("account", "icon-user", "Account", "18px")}
+            {this.renderSidebarItem("about", "icon-detail", "About", "18px")}
           </div>
 
           <hr className="setting-dialog-sidebar-divider" />
 
-          {/* Second group */}
+          {/* 第二组 */}
           <div className="setting-dialog-sidebar-group">
-            {renderSidebarItem("plugins", "icon-internet", "Plugins", "")}
-            {renderSidebarItem(
+            {this.renderSidebarItem("plugins", "icon-internet", "Plugins", "")}
+            {this.renderSidebarItem(
               "ai",
               "icon-idea-line",
               "AI service",
               "18px"
             )}
-            {renderSidebarItem(
+            {this.renderSidebarItem(
               "background",
               "icon-image",
               "Background",
               "18px"
             )}
-            {renderSidebarItem(
+            {this.renderSidebarItem(
               "font",
               "icon-font",
               "Font management",
               "18px"
             )}
-            {renderSidebarItem(
+            {this.renderSidebarItem(
               "chapter",
               "icon-convert-text",
               "TXT parser",
               "19px"
             )}
-            {renderSidebarItem(
+            {this.renderSidebarItem(
               "text",
               "icon-edit-line",
               "Text rules",
               "18px"
             )}
             {isElectron &&
-              renderSidebarItem(
+              this.renderSidebarItem(
                 "dict",
                 "icon-address-book",
                 "Local dictionary",
@@ -192,49 +192,49 @@ const SettingDialog = () => {
         {/* 右侧主内容区 */}
         <div className="setting-dialog-main">
           <div className="setting-dialog-main-header">
-            <Trans>{getCurrentPageTitle()}</Trans>
+            <Trans>{this.getCurrentPageTitle()}</Trans>
           </div>
 
           <div
             className="setting-close-container"
             onClick={() => {
-              handleSetting(false);
-              handleSettingMode("general");
+              this.props.handleSetting(false);
+              this.props.handleSettingMode("general");
             }}
           >
             <span className="icon-close setting-close"></span>
           </div>
 
-          <div className="setting-dialog-info" ref={contentRef}>
-            {settingMode === "general" ? (
+          <div className="setting-dialog-info" ref={this.contentRef}>
+            {this.props.settingMode === "general" ? (
               <GeneralSetting />
-            ) : settingMode === "reading" ? (
+            ) : this.props.settingMode === "reading" ? (
               <ReadingSetting />
-            ) : settingMode === "shortcut" ? (
+            ) : this.props.settingMode === "shortcut" ? (
               <ShortcutSetting />
-            ) : settingMode === "appearance" ? (
+            ) : this.props.settingMode === "appearance" ? (
               <AppearanceSetting />
-            ) : settingMode === "sync" ? (
+            ) : this.props.settingMode === "sync" ? (
               <SyncSetting />
-            ) : settingMode === "account" ? (
+            ) : this.props.settingMode === "account" ? (
               <AccountSetting />
-            ) : settingMode === "data" ? (
+            ) : this.props.settingMode === "data" ? (
               <DataSetting />
-            ) : settingMode === "about" ? (
+            ) : this.props.settingMode === "about" ? (
               <AboutSetting />
-            ) : settingMode === "ai" ? (
+            ) : this.props.settingMode === "ai" ? (
               <AISetting />
-            ) : settingMode === "background" ? (
+            ) : this.props.settingMode === "background" ? (
               <BackgroundSetting />
-            ) : settingMode === "font" ? (
+            ) : this.props.settingMode === "font" ? (
               <FontSetting />
-            ) : settingMode === "chapter" ? (
+            ) : this.props.settingMode === "chapter" ? (
               <ChapterSetting />
-            ) : settingMode === "text" ? (
+            ) : this.props.settingMode === "text" ? (
               <TextSetting />
-            ) : settingMode === "dict" ? (
+            ) : this.props.settingMode === "dict" ? (
               <DictSetting />
-            ) : settingMode === "more" ? (
+            ) : this.props.settingMode === "more" ? (
               <MoreSetting />
             ) : (
               <PluginSetting />
@@ -242,7 +242,8 @@ const SettingDialog = () => {
           </div>
         </div>
       </div>
-  );
-};
+    );
+  }
+}
 
 export default SettingDialog;

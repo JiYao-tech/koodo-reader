@@ -19,16 +19,16 @@ import i18n from "../../i18n";
 
 declare var window: any;
 
-export type BackupResult = "success" | "failed" | "cancel";
-
-export const backup = async (service: string): Promise<BackupResult> => {
+export const backup = async (service: string): Promise<Boolean> => {
   await checkMissingBook();
   let fileName = "data.zip";
   if (service === "local") {
-    let now = new Date();
-    fileName = `KoodoReader-Backup-${now.getFullYear()}-${
-      now.getMonth() + 1
-    }-${now.getDate()}-${Date.now()}.zip`;
+    let year = new Date().getFullYear(),
+      month = new Date().getMonth() + 1,
+      day = new Date().getDate();
+    fileName = `${year}-${month <= 9 ? "0" + month : month}-${
+      day <= 9 ? "0" + day : day
+    }.zip`;
   }
   if (isElectron) {
     const ipcRenderer = window.electronAPI;
@@ -36,7 +36,8 @@ export const backup = async (service: string): Promise<BackupResult> => {
     if (service === "local") {
       const backupPath = await ipcRenderer.invoke("select-path");
       if (!backupPath) {
-        return "cancel";
+        toast.error(i18n.t("Please select a backup path"));
+        return false;
       }
       targetPath = backupPath;
     } else {
@@ -58,35 +59,37 @@ export const backup = async (service: string): Promise<BackupResult> => {
       }
     );
     if (!backupResult) {
-      return "failed";
+      return false;
     }
     if (service === "local") {
-      return "success";
+      return true;
     } else {
       let tokenConfig = await getCloudConfig(service);
 
-      return (await ipcRenderer.invoke("cloud-upload", {
+      return await ipcRenderer.invoke("cloud-upload", {
         ...tokenConfig,
         fileName: "data.zip",
         service: service,
         type: "backup",
         storagePath: getStorageLocation(),
-      }))
-        ? "success"
-        : "failed";
+      });
     }
   } else {
     let blob: Blob | boolean = await backupFromStorage();
     if (!blob) {
-      return "failed";
+      return false;
     }
     if (service === "local") {
       saveAs(blob as Blob, fileName);
-      return "success";
+      return true;
     } else {
       let syncUtil = await SyncService.getSyncUtil();
       let result = await syncUtil.uploadFile(fileName, "backup", blob as Blob);
-      return result ? "success" : "failed";
+      if (result) {
+        return true;
+      } else {
+        return false;
+      }
     }
   }
 };
@@ -118,10 +121,7 @@ export const generateSnapshot = async () => {
       }
     }
     const configStr = JSON.stringify(await ConfigUtil.dumpConfig("config"));
-    entries.push({
-      name: "config/config.json",
-      data: new TextEncoder().encode(configStr),
-    });
+    entries.push({ name: "config/config.json", data: new TextEncoder().encode(configStr) });
     if (!fs.existsSync(snapshotPath))
       fs.mkdirSync(snapshotPath, { recursive: true });
     const zip = new JSZip();
@@ -291,6 +291,21 @@ export const backupToConfigJson = async () => {
     "utf-8"
   );
 };
+export const backupToSyncJson = async () => {
+  let syncStr = JSON.stringify(await ConfigUtil.dumpConfig("sync"));
+  const fs = window.electronAPI.fs;
+  const path = window.electronAPI.path;
+  const dataPath = getStorageLocation() || "";
+  if (!fs.existsSync(path.join(dataPath, "config"))) {
+    fs.mkdirSync(path.join(dataPath, "config"), { recursive: true });
+  }
+  fs.writeFileSync(
+    path.join(dataPath, "config", "sync.json"),
+    syncStr,
+    "utf-8"
+  );
+};
+
 export const zipBook = (zip: any) => {
   return new Promise<boolean>(async (resolve) => {
     let books = await DatabaseService.getAllRecords("books");

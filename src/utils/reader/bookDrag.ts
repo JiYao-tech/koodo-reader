@@ -1,20 +1,6 @@
-import { ConfigService, CollectionUtil } from "../../assets/lib/kookit-extra-browser.min";
-import i18n from "../../i18n";
-
-const collectionUtil = new CollectionUtil(ConfigService);
+import { ConfigService } from "../../assets/lib/kookit-extra-browser.min";
 
 export const BOOK_DRAG_TYPE = "application/x-koodo-book";
-
-export function filterNonCollectionKeys(bookKeys: string[]): string[] {
-  return bookKeys.filter((key) => key && !collectionUtil.isCollection(key));
-}
-
-export function getMovedFromSuffix(movedFrom: string[]): string {
-  if (!movedFrom || movedFrom.length === 0) return "";
-  return (
-    " (" + i18n.t("Moved from collection") + ": " + movedFrom.join(", ") + ")"
-  );
-}
 
 export function setBookDragData(e: React.DragEvent, bookKeys: string[]): void {
   if (!e.dataTransfer) return;
@@ -100,10 +86,6 @@ export function moveBooksToTrash(bookKeys: string[]): number {
     ConfigService.deleteListConfig(key, "favoriteBooks");
     existing.add(key);
     moved++;
-  }
-  let bookOnlyKeys = filterNonCollectionKeys(bookKeys);
-  if (bookOnlyKeys.length > 0) {
-    collectionUtil.removeBooksFromAllCollections(bookOnlyKeys);
   }
   return moved;
 }

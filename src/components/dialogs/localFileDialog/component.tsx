@@ -1,10 +1,11 @@
-import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import React from "react";
 import "./localFileDialog.css";
 import { Trans } from "react-i18next";
-import { useAppStore } from "../../../store/useAppStore";
-import LazyLottie from "../../lazyLottie";
+import { LocalFileDialogProps, LocalFileDialogState } from "./interface";
+import Lottie from "lottie-react";
+import animationSuccess from "../../../assets/lotties/success.json";
+import animationSafe from "../../../assets/lotties/safe.json";
+import _ from "underscore";
 import toast from "react-hot-toast";
 import { isElectron } from "react-device-detect";
 import { ConfigService } from "../../../assets/lib/kookit-extra-browser.min";
@@ -12,40 +13,39 @@ import {
   exportToLocalFile,
   LocalFileManager,
 } from "../../../utils/file/localFile";
-
-const LocalFileDialog = () => {
-  const handleLocalFileDialog = useAppStore((s) => s.handleLocalFileDialog);
-  const handleFetchBooks = useAppStore((s) => s.handleFetchBooks);
-  const { t } = useTranslation();
-  const navigate = useNavigate();
-  const [isFinish, setIsFinish] = useState(false);
-  const [status, setStatus] = useState<{
-    hasAccess: boolean;
-    needsReauthorization: boolean;
-    directoryName?: string;
-  }>({
-    hasAccess: false,
-    needsReauthorization: false,
-    directoryName: "",
-  });
-
-  useEffect(() => {
+class LocalFileDialog extends React.Component<
+  LocalFileDialogProps,
+  LocalFileDialogState
+> {
+  constructor(props: LocalFileDialogProps) {
+    super(props);
+    this.state = {
+      isFinish: false,
+      hasLocalAccess: false,
+      status: {
+        hasAccess: false,
+        needsReauthorization: false,
+        directoryName: "",
+      },
+    };
+  }
+  async componentDidMount() {
     if (!isElectron) {
-      LocalFileManager.getPermissionStatus().then((nextStatus) => {
-        setStatus(nextStatus);
+      const status = await LocalFileManager.getPermissionStatus();
+      this.setState({
+        status,
       });
     }
-  }, []);
-
-  const handleClose = () => {
-    handleLocalFileDialog(false);
+  }
+  handleClose = () => {
+    this.props.handleLocalFileDialog(false);
   };
-  const showMessage = (message: string) => {
-    toast(t(message));
+  showMessage = (message: string) => {
+    toast(this.props.t(message));
   };
-  const handleSelectFolder = async () => {
+  handleSelectFolder = async () => {
     if (!LocalFileManager.isSupported()) {
-      showMessage("Your browser doesn't support local file access");
+      this.showMessage("Your browser doesn't support local file access");
       return;
     }
 
@@ -53,8 +53,10 @@ const LocalFileDialog = () => {
       const directoryHandle = await LocalFileManager.requestDirectoryAccess();
 
       if (directoryHandle) {
+        // 成功获取权限
+
         toast.loading(
-          t("Granting access to local folder, please wait"),
+          this.props.t("Granting access to local folder, please wait"),
           {
             id: "local-folder-access",
           }
@@ -65,120 +67,130 @@ const LocalFileDialog = () => {
           await exportToLocalFile();
         }
         toast.dismiss("local-folder-access");
-        setIsFinish(true);
+        this.setState({
+          isFinish: true,
+          hasLocalAccess: true,
+        });
         ConfigService.setItem("isUseLocal", "yes");
-        showMessage("Local folder access granted successfully");
-        handleFetchBooks();
+        this.showMessage("Local folder access granted successfully");
+        this.props.handleFetchBooks();
         setTimeout(() => {
-          navigate("/manager/home");
+          this.props.history.push("/manager/home");
         }, 2000);
       } else {
-        showMessage("Failed to get folder access permission");
+        this.showMessage("Failed to get folder access permission");
       }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       toast.error("Error selecting folder:" + errorMessage);
       console.error("Error selecting folder:", error);
-      showMessage("Error occurred while selecting folder");
+      this.showMessage("Error occurred while selecting folder");
     }
   };
+  render() {
+    return (
+      <div
+        className="backup-page-container"
+        style={{ height: "300px", top: "calc(50% - 150px)" }}
+      >
+        <div className="add-dialog-title">
+          <Trans>Never lose your data</Trans>
+        </div>
+        {!this.state.isFinish ? (
+          <div
+            className="backup-page-option"
+            style={{ bottom: "0px", top: "0px" }}
+          >
+            <div className="backup-page-finish">
+              <Lottie
+                animationData={animationSafe}
+                loop={false}
+                style={{ height: 120, width: "100%" }}
+              />
+              <div className="backup-page-warning-text">
+                {this.state.status.needsReauthorization ? (
+                  this.props.t("Need to reauthorize the access to directory") +
+                  " " +
+                  this.state.status.directoryName +
+                  ", " +
+                  this.props.t(
+                    "Please click the allow on every visit button to avoid this popup once and for all"
+                  )
+                ) : (
+                  <Trans>
+                    Grant access to local folder to save your data and reduce
+                    the risk of data loss
+                  </Trans>
+                )}
+              </div>
+            </div>
+            <div className="add-dialog-button-container">
+              <div
+                className="add-dialog-cancel"
+                style={{ borderWidth: 0, marginRight: "20px" }}
+                onClick={() => {
+                  ConfigService.setItem("isUseLocal", "no");
+                  this.handleClose();
+                }}
+              >
+                <Trans>Continue to store in the browser</Trans>
+              </div>
+              {this.state.status.needsReauthorization ? (
+                <div
+                  className="add-dialog-confirm"
+                  onClick={async () => {
+                    await LocalFileManager.ensureDirectoryAccess();
+                    this.setState({
+                      hasLocalAccess: true,
+                      isFinish: true,
+                    });
 
-  return (
-    <div
-      className="backup-page-container"
-      style={{ height: "300px", top: "calc(50% - 150px)" }}
-    >
-      <div className="add-dialog-title">
-        <Trans>Never lose your data</Trans>
-      </div>
-      {!isFinish ? (
-        <div className="backup-page-option" style={{ bottom: "0px", top: "0px" }}>
-          <div className="backup-page-finish">
-            <LazyLottie
-              animation="safe"
-              loop={false}
-              style={{ height: 120, width: "100%" }}
-            />
-            <div className="backup-page-warning-text">
-              {status.needsReauthorization ? (
-                t("Need to reauthorize the access to directory") +
-                " " +
-                status.directoryName +
-                ", " +
-                t(
-                  "Please click the allow on every visit button to avoid this popup once and for all"
-                )
+                    this.props.handleFetchBooks();
+                    setTimeout(() => {
+                      this.props.history.push("/manager/home");
+                    }, 2000);
+                  }}
+                >
+                  <Trans>Authorize</Trans>
+                </div>
               ) : (
-                <Trans>
-                  Grant access to local folder to save your data and reduce the
-                  risk of data loss
-                </Trans>
+                <div
+                  className="add-dialog-confirm"
+                  onClick={() => {
+                    this.handleSelectFolder();
+                  }}
+                >
+                  <Trans>Select folder</Trans>
+                </div>
               )}
             </div>
           </div>
-          <div className="add-dialog-button-container">
-            <div
-              className="add-dialog-cancel"
-              style={{ borderWidth: 0, marginRight: "20px" }}
-              onClick={() => {
-                ConfigService.setItem("isUseLocal", "no");
-                handleClose();
-              }}
-            >
-              <Trans>Continue to store in the browser</Trans>
-            </div>
-            {status.needsReauthorization ? (
-              <div
-                className="add-dialog-confirm"
-                onClick={async () => {
-                  await LocalFileManager.ensureDirectoryAccess();
-                  setIsFinish(true);
-
-                  handleFetchBooks();
-                  setTimeout(() => {
-                    navigate("/manager/home");
-                  }, 2000);
-                }}
-              >
-                <Trans>Authorize</Trans>
+        ) : (
+          <div className="backup-page-finish-container">
+            <div className="backup-page-finish">
+              <Lottie
+                animationData={animationSuccess}
+                loop={false}
+                style={{ height: 80, width: "100%" }}
+              />
+              <div className="backup-page-finish-text">
+                <Trans>Setup successful</Trans>
               </div>
-            ) : (
-              <div
-                className="add-dialog-confirm"
-                onClick={() => {
-                  handleSelectFolder();
-                }}
-              >
-                <Trans>Select folder</Trans>
-              </div>
-            )}
-          </div>
-        </div>
-      ) : (
-        <div className="backup-page-finish-container">
-          <div className="backup-page-finish">
-            <LazyLottie
-              animation="success"
-              loop={false}
-              style={{ height: 80, width: "100%" }}
-            />
-            <div className="backup-page-finish-text">
-              <Trans>Setup successful</Trans>
             </div>
           </div>
+        )}
+        <div
+          className="backup-page-close-icon"
+          onClick={() => {
+            this.handleClose();
+          }}
+        >
+          <span className="icon-close backup-close-icon"></span>
         </div>
-      )}
-      <div
-        className="backup-page-close-icon"
-        onClick={() => {
-          handleClose();
-        }}
-      >
-        <span className="icon-close backup-close-icon"></span>
       </div>
-    </div>
-  );
-};
+    );
+  }
+}
 
 export default LocalFileDialog;

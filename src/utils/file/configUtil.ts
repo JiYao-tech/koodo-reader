@@ -524,7 +524,6 @@ class ConfigUtil {
         "customBackgrounds",
         "customFonts",
         "customDicts",
-        "bookCollection",
       ];
       for (let i = 0; i < configList.length; i++) {
         let item = configList[i];

@@ -1,41 +1,33 @@
-import { useTranslation } from "react-i18next";
-import { useState } from "react";
+import React from "react";
 import "./deleteIcon.css";
-import DeleteDialog from "../dialogs/deleteDialog";
+import { DeleteIconProps, DeleteIconStates } from "./interface";
+import DeletePopup from "../dialogs/deletePopup";
 import toast from "react-hot-toast";
 import DatabaseService from "../../utils/storage/databaseService";
 import { ConfigService } from "../../assets/lib/kookit-extra-browser.min";
 import ConfigUtil from "../../utils/file/configUtil";
-import { useAppStore } from "../../store/useAppStore";
+import { book } from "../../store/reducers";
 
-export interface DeleteIconProps {
-  mode: string;
-  index: number;
-  tagName: string;
-  itemKey: string;
-  renderHighlighters: () => void;
-  handleShowDelete: (Deletekey: string) => void;
-  handleChangeTag: (index: number) => void;
-}
+class DeleteIcon extends React.Component<DeleteIconProps, DeleteIconStates> {
+  constructor(props: DeleteIconProps) {
+    super(props);
+    this.state = {
+      deleteIndex: -1,
+      isOpenDelete: false,
+    };
+  }
 
-const DeleteIcon = (props: DeleteIconProps) => {
-  const htmlBook = useAppStore((s) => s.reader.htmlBook);
-  const currentBook = useAppStore((s) => s.book.currentBook);
-  const handleFetchBookmarks = useAppStore((s) => s.handleFetchBookmarks);
-  const handleFetchNotes = useAppStore((s) => s.handleFetchNotes);
-  const handleShowBookmark = useAppStore((s) => s.handleShowBookmark);
-  const { t } = useTranslation();
-  const [isOpenDelete, setIsOpenDelete] = useState(false);
-
-  const handleDelete = async () => {
+  handleDelete = async () => {
     let deleteFunc =
-      props.mode === "notes" ? handleFetchNotes : handleFetchBookmarks;
-    if (props.mode === "tags") {
-      ConfigService.deleteListConfig(props.tagName, "noteTags");
-      handleDeleteTagFromNote(props.tagName);
+      this.props.mode === "notes"
+        ? this.props.handleFetchNotes
+        : this.props.handleFetchBookmarks;
+    if (this.props.mode === "tags") {
+      ConfigService.deleteListConfig(this.props.tagName, "noteTags");
+      this.handleDeleteTagFromNote(this.props.tagName);
       return;
     }
-    if (props.mode === "bookmarks") {
+    if (this.props.mode === "bookmarks") {
       let bookLocation: {
         text: string;
         count: string;
@@ -45,73 +37,77 @@ const DeleteIcon = (props: DeleteIconProps) => {
         percentage: string;
         cfi: string;
       } = ConfigService.getObjectConfig(
-        currentBook.key,
+        this.props.currentBook.key,
         "recordLocation",
         {}
       );
       let bookmark = await DatabaseService.getRecord(
-        props.itemKey,
+        this.props.itemKey,
         "bookmarks"
       );
       if (!bookmark) return;
       if (bookLocation.percentage === bookmark.percentage) {
-        handleShowBookmark(false);
+        this.props.handleShowBookmark(false);
       }
-      DatabaseService.deleteRecord(props.itemKey, "bookmarks").then(() => {
+      DatabaseService.deleteRecord(this.props.itemKey, "bookmarks").then(() => {
         deleteFunc();
-        toast.success(t("Deletion successful"));
+        toast.success(this.props.t("Deletion successful"));
       });
       return;
     }
-    if (props.mode === "notes") {
-      let note = await DatabaseService.getRecord(props.itemKey, "notes");
+    if (this.props.mode === "notes") {
+      let note = await DatabaseService.getRecord(this.props.itemKey, "notes");
       if (!note) return;
-      if (htmlBook && htmlBook.rendition) {
-        htmlBook.rendition.removeOneNote(
-          props.itemKey,
+      if (this.props.htmlBook && this.props.htmlBook.rendition) {
+        this.props.htmlBook.rendition.removeOneNote(
+          this.props.itemKey,
           note.chapterIndex
         );
       }
 
-      DatabaseService.deleteRecord(props.itemKey, "notes").then(() => {
+      DatabaseService.deleteRecord(this.props.itemKey, "notes").then(() => {
         deleteFunc();
-        toast.success(t("Deletion successful"));
+        toast.success(this.props.t("Deletion successful"));
       });
 
       return;
     }
   };
-  const handleDeleteTagFromNote = async (tagName: string) => {
+  handleDeleteTagFromNote = async (tagName: string) => {
     await ConfigUtil.deleteTagFromNotes(tagName);
   };
-  const handleDeletePopup = (isOpenDelete: boolean) => {
-    setIsOpenDelete(isOpenDelete);
+  handleDeletePopup = (isOpenDelete: boolean) => {
+    this.setState({ isOpenDelete });
     if (!isOpenDelete) {
-      props.handleChangeTag(props.index);
+      this.props.handleChangeTag(this.props.index);
     }
   };
-  const deleteDialogProps = {
-    name: props.tagName,
-    title: "Delete this tag",
-    description: "This action will clear and remove this tag",
-    handleClose: () => handleDeletePopup(false),
-    handleConfirm: handleDelete,
-  };
-  return (
-    <>
-      {isOpenDelete && <DeleteDialog {...deleteDialogProps} />}
-      <div
-        className="delete-digest-button"
-        onClick={() => {
-          props.mode === "tags"
-            ? handleDeletePopup(true)
-            : handleDelete();
-        }}
-      >
-        <span className="icon-close delete-digest-icon"></span>
-      </div>
-    </>
-  );
-};
+  render() {
+    const deletePopupProps = {
+      name: this.props.tagName,
+      title: "Delete this tag",
+      description: "This action will clear and remove this tag",
+      handleDeletePopup: this.handleDeletePopup,
+      handleDeleteOpearion: this.handleDelete,
+    };
+    return (
+      <>
+        {this.state.isOpenDelete && (
+          <DeletePopup {...(deletePopupProps as any)} />
+        )}
+        <div
+          className="delete-digest-button"
+          onClick={() => {
+            this.props.mode === "tags"
+              ? this.handleDeletePopup(true)
+              : this.handleDelete();
+          }}
+        >
+          <span className="icon-close delete-digest-icon"></span>
+        </div>
+      </>
+    );
+  }
+}
 
 export default DeleteIcon;

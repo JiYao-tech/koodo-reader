@@ -1,78 +1,35 @@
-import { useLatest } from "../../../utils/hooks/useLatest";
-import { useTranslation } from "react-i18next";
-import React, { useEffect, useRef, useState } from "react";
+import React from "react";
 import "./opdsDialog.css";
 import { Trans } from "react-i18next";
 import toast from "react-hot-toast";
 import CryptoJS from "crypto-js";
 import { ConfigService } from "../../../assets/lib/kookit-extra-browser.min";
-import { useAppStore } from "../../../store/useAppStore";
+import {
+  OPDSCatalog,
+  OPDSEntry,
+  OPDSFeed,
+  OPDSLink,
+  OPDSDialogProps,
+  OPDSDialogState,
+} from "./interface";
 import { supportedFormats } from "../../../utils/common";
 
-export interface OPDSCatalog {
-  id: string;
-  title: string;
-  url: string;
-  username?: string;
-  password?: string;
-  isBuiltIn?: boolean;
-  isElectronicOnly?: boolean;
-}
-
-export interface OPDSLink {
-  href: string;
-  type: string;
-  rel: string;
-  title?: string;
-}
-
-export interface OPDSEntry {
-  id: string;
-  title: string;
-  authors: string[];
-  summary: string;
-  coverUrl: string;
-  thumbnailUrl: string;
-  links: OPDSLink[];
-  updated: string;
-  isNavigation: boolean;
-  // Dublin Core metadata
-  publisher: string;
-  language: string;
-  pubDate: string;
-  rights: string;
-  categories: string[];
-}
-
-export interface OPDSFeed {
-  title: string;
-  url: string;
-  entries: OPDSEntry[];
-  links: OPDSLink[];
-  searchTemplate: string;
-}
-
-export interface OPDSDialogState {
-  view: "catalog" | "feed" | "detail";
-  userCatalogs: OPDSCatalog[];
-  currentFeed: OPDSFeed | null;
-  feedStack: { url: string; title: string }[];
-  currentCatalogAuth: {
-    username: string;
-    password: string;
-  } | null;
-  selectedBook: OPDSEntry | null;
-  isLoading: boolean;
-  isLoadingMore: boolean;
-  error: string;
-  searchQuery: string;
-  isAddingCatalog: boolean;
-  newCatalogUrl: string;
-  newCatalogTitle: string;
-  newCatalogUsername: string;
-  newCatalogPassword: string;
-  isTesting: boolean;
-}
+const BUILT_IN_CATALOGS: OPDSCatalog[] = [
+  {
+    id: "project-gutenberg",
+    title: "Project Gutenberg",
+    url: "https://www.gutenberg.org/ebooks.opds/",
+    isBuiltIn: true,
+    isElectronicOnly: false,
+  },
+  {
+    id: "manybooks",
+    title: "ManyBooks",
+    url: "https://manybooks.net/opds/index.php",
+    isBuiltIn: true,
+    isElectronicOnly: true,
+  },
+];
 
 const DOWNLOAD_TYPES: Record<string, string> = {
   "application/epub+zip": "epub",
@@ -92,17 +49,11 @@ const DOWNLOAD_TYPES: Record<string, string> = {
   "message/rfc822": "mhtml",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
     "docx",
-  "application/msword": "doc",
-  "application/rtf": "rtf",
-  "text/rtf": "rtf",
   "text/markdown": "md",
   "text/x-markdown": "md",
   "application/fb2+zip": "fb2",
   "application/fb2": "fb2",
   "application/x-fb2": "fb2",
-  "application/vnd.ms-htmlhelp": "chm",
-  "application/x-chm": "chm",
-  "application/vnd.ms-htmlhelpfile": "chm",
   "application/x-cbz": "cbz",
   "application/vnd.comicbook+zip": "cbz",
   "application/x-cbt": "cbt",
@@ -111,16 +62,6 @@ const DOWNLOAD_TYPES: Record<string, string> = {
   "application/vnd.comicbook-rar": "cbr",
   "application/x-cb7": "cb7",
   "application/vnd.comicbook+7z": "cb7",
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-    "pptx",
-  "application/vnd.ms-powerpoint": "ppt",
-  "application/oxps": "oxps",
-  "application/vnd.ms-xpsdocument": "xps",
-  "image/vnd.djvu": "djvu",
-  "application/ofd": "ofd",
-  "application/x-ofd": "ofd",
-  "application/x-caj": "caj",
-  "application/caj": "caj",
 };
 
 const ACQUISITION_RELS = [
@@ -429,30 +370,50 @@ interface AuthenticatedImageState {
   isFailed: boolean;
 }
 
-const AuthenticatedImage = ({
-  src,
-  alt,
-  className,
-  catalogAuth,
-  onError,
-}: AuthenticatedImageProps) => {
-  const [state, setState] = useState<AuthenticatedImageState>({
-    blobUrl: "",
-    isFailed: false,
-  });
-  const currentBlobUrl = useRef("");
+class AuthenticatedImage extends React.PureComponent<
+  AuthenticatedImageProps,
+  AuthenticatedImageState
+> {
+  private currentBlobUrl = "";
 
-  const revokeBlobUrl = () => {
-    if (currentBlobUrl.current) {
-      URL.revokeObjectURL(currentBlobUrl.current);
-      currentBlobUrl.current = "";
+  constructor(props: AuthenticatedImageProps) {
+    super(props);
+    this.state = {
+      blobUrl: "",
+      isFailed: false,
+    };
+  }
+
+  componentDidMount() {
+    this.loadImage();
+  }
+
+  componentDidUpdate(prevProps: AuthenticatedImageProps) {
+    if (
+      prevProps.src !== this.props.src ||
+      prevProps.catalogAuth?.username !== this.props.catalogAuth?.username ||
+      prevProps.catalogAuth?.password !== this.props.catalogAuth?.password
+    ) {
+      this.loadImage();
     }
-  };
+  }
 
-  const loadImage = async () => {
+  componentWillUnmount() {
+    this.revokeBlobUrl();
+  }
+
+  revokeBlobUrl() {
+    if (this.currentBlobUrl) {
+      URL.revokeObjectURL(this.currentBlobUrl);
+      this.currentBlobUrl = "";
+    }
+  }
+
+  async loadImage() {
+    const { src, catalogAuth, onError } = this.props;
     if (!src) {
-      revokeBlobUrl();
-      setState({ blobUrl: "", isFailed: true });
+      this.revokeBlobUrl();
+      this.setState({ blobUrl: "", isFailed: true });
       return;
     }
 
@@ -462,43 +423,49 @@ const AuthenticatedImage = ({
         throw new Error(`HTTP ${response.status}`);
       }
       const blob = await response.blob();
-      revokeBlobUrl();
+      this.revokeBlobUrl();
       const blobUrl = URL.createObjectURL(blob);
-      currentBlobUrl.current = blobUrl;
-      setState({ blobUrl, isFailed: false });
+      this.currentBlobUrl = blobUrl;
+      this.setState({ blobUrl, isFailed: false });
     } catch {
-      revokeBlobUrl();
-      setState({ blobUrl: "", isFailed: true });
+      this.revokeBlobUrl();
+      this.setState({ blobUrl: "", isFailed: true });
       onError?.();
     }
-  };
+  }
 
-  const loadImageRef = useLatest(loadImage);
+  render() {
+    const { alt, className } = this.props;
+    const { blobUrl, isFailed } = this.state;
+    if (!blobUrl || isFailed) return null;
+    return <img src={blobUrl} alt={alt} className={className} />;
+  }
+}
 
-  useEffect(() => {
-    loadImageRef.current();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src, catalogAuth?.username, catalogAuth?.password]);
-
-  useEffect(() => {
-    return () => {
-      if (currentBlobUrl.current) {
-        URL.revokeObjectURL(currentBlobUrl.current);
-        currentBlobUrl.current = "";
-      }
+class OPDSDialog extends React.Component<OPDSDialogProps, OPDSDialogState> {
+  constructor(props: OPDSDialogProps) {
+    super(props);
+    this.state = {
+      view: "catalog",
+      userCatalogs: this.loadUserCatalogs(),
+      currentFeed: null,
+      feedStack: [],
+      currentCatalogAuth: null,
+      selectedBook: null,
+      isLoading: false,
+      isLoadingMore: false,
+      error: "",
+      searchQuery: "",
+      isAddingCatalog: false,
+      newCatalogUrl: "",
+      newCatalogTitle: "",
+      newCatalogUsername: "",
+      newCatalogPassword: "",
+      isTesting: false,
     };
-  }, []);
+  }
 
-  const { blobUrl, isFailed } = state;
-  if (!blobUrl || isFailed) return null;
-  return <img src={blobUrl} alt={alt} className={className} />;
-};
-
-const OPDSDialog = () => {
-  const importBookFunc = useAppStore((s) => s.book.importBookFunc);
-  const handleOPDSDialog = useAppStore((s) => s.handleOPDSDialog);
-  const { t } = useTranslation();
-  const loadUserCatalogs = (): OPDSCatalog[] => {
+  loadUserCatalogs(): OPDSCatalog[] {
     try {
       const catalogMap = ConfigService.getAllObjectConfig("opdsCatalogs") || {};
       const catalogList =
@@ -509,37 +476,12 @@ const OPDSDialog = () => {
     } catch {
       return [];
     }
-  };
+  }
 
-  const [state, setState] = useState<OPDSDialogState>({
-    view: "catalog",
-    userCatalogs: loadUserCatalogs(),
-    currentFeed: null,
-    feedStack: [],
-    currentCatalogAuth: null,
-    selectedBook: null,
-    isLoading: false,
-    isLoadingMore: false,
-    error: "",
-    searchQuery: "",
-    isAddingCatalog: false,
-    newCatalogUrl: "",
-    newCatalogTitle: "",
-    newCatalogUsername: "",
-    newCatalogPassword: "",
-    isTesting: false,
-  });
+  handleClose = () => this.props.handleOPDSDialog(false);
 
-  const stateRef = useLatest(state);
-
-  const mergeState = (patch: Partial<OPDSDialogState>) => {
-    setState((prev) => ({ ...prev, ...patch }));
-  };
-
-  const handleClose = () => handleOPDSDialog(false);
-
-  const openCatalog = async (catalog: OPDSCatalog) => {
-    mergeState({
+  openCatalog = async (catalog: OPDSCatalog) => {
+    this.setState({
       view: "feed",
       isLoading: true,
       isLoadingMore: false,
@@ -554,16 +496,16 @@ const OPDSDialog = () => {
     });
     try {
       const feed = await fetchOPDSFeed(catalog.url, catalog);
-      mergeState({ currentFeed: feed, isLoading: false });
+      this.setState({ currentFeed: feed, isLoading: false });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      mergeState({ isLoading: false, error: msg });
-      toast.error(t("Failed to load catalog") + ": " + msg);
+      this.setState({ isLoading: false, error: msg });
+      toast.error(this.props.t("Failed to load catalog") + ": " + msg);
     }
   };
 
-  const navigateToEntry = async (entry: OPDSEntry) => {
-    const { currentCatalogAuth } = stateRef.current;
+  navigateToEntry = async (entry: OPDSEntry) => {
+    const { currentCatalogAuth } = this.state;
     const navLink = entry.links.find(
       (l) =>
         l.type?.includes("application/atom+xml") ||
@@ -572,8 +514,7 @@ const OPDSDialog = () => {
         l.rel === "related"
     );
     if (!navLink) return;
-    setState((prev) => ({
-      ...prev,
+    this.setState((prev) => ({
       isLoading: true,
       isLoadingMore: false,
       error: "",
@@ -582,76 +523,72 @@ const OPDSDialog = () => {
     }));
     try {
       const feed = await fetchOPDSFeed(navLink.href, currentCatalogAuth);
-      mergeState({ currentFeed: feed, isLoading: false });
+      this.setState({ currentFeed: feed, isLoading: false });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setState((prev) => ({
-        ...prev,
+      this.setState((prev) => ({
         isLoading: false,
         error: msg,
         feedStack: prev.feedStack.slice(0, -1),
       }));
-      toast.error(t("Failed to load catalog") + ": " + msg);
+      toast.error(this.props.t("Failed to load catalog") + ": " + msg);
     }
   };
 
-  const loadMore = async () => {
+  loadMore = async () => {
     const { currentFeed, currentCatalogAuth, isLoading, isLoadingMore } =
-      stateRef.current;
+      this.state;
     if (isLoading || isLoadingMore || !currentFeed) return;
     const nextLink = currentFeed.links.find((l) => l.rel === "next");
     if (!nextLink) return;
     const originalFeed = currentFeed;
-    mergeState({ isLoadingMore: true });
+    this.setState({ isLoadingMore: true });
     try {
       const nextFeed = await fetchOPDSFeed(nextLink.href, currentCatalogAuth);
-      setState((prev) => {
-        if (prev.currentFeed !== originalFeed) {
+      this.setState(
+        (prev): Pick<OPDSDialogState, "isLoadingMore" | "currentFeed"> => {
+          if (prev.currentFeed !== originalFeed) {
+            return { isLoadingMore: false, currentFeed: prev.currentFeed };
+          }
           return {
-            ...prev,
             isLoadingMore: false,
-            currentFeed: prev.currentFeed,
+            currentFeed: {
+              ...prev.currentFeed,
+              entries: prev.currentFeed.entries.concat(nextFeed.entries),
+              links: nextFeed.links,
+            },
           };
         }
-        return {
-          ...prev,
-          isLoadingMore: false,
-          currentFeed: {
-            ...prev.currentFeed,
-            entries: prev.currentFeed.entries.concat(nextFeed.entries),
-            links: nextFeed.links,
-          },
-        };
-      });
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      mergeState({ isLoadingMore: false });
-      if (stateRef.current.currentFeed === originalFeed) {
-        toast.error(t("Failed to load more") + ": " + msg);
+      this.setState({ isLoadingMore: false });
+      if (this.state.currentFeed === originalFeed) {
+        toast.error(this.props.t("Failed to load more") + ": " + msg);
       }
     }
   };
 
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    if (stateRef.current.view !== "feed") return;
-    const { isLoading, isLoadingMore, currentFeed } = stateRef.current;
+  handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (this.state.view !== "feed") return;
+    const { isLoading, isLoadingMore, currentFeed } = this.state;
     if (isLoading || isLoadingMore || !currentFeed) return;
     if (!currentFeed.links.some((l) => l.rel === "next")) return;
     const { scrollTop, clientHeight, scrollHeight } = e.currentTarget;
     if (scrollHeight - scrollTop - clientHeight < 150) {
-      loadMore();
+      this.loadMore();
     }
   };
 
-  const handleBack = () => {
-    const { view, feedStack, currentCatalogAuth } = stateRef.current;
+  handleBack = () => {
+    const { view, feedStack, currentCatalogAuth } = this.state;
     if (view === "detail") {
-      mergeState({ view: "feed", selectedBook: null });
+      this.setState({ view: "feed", selectedBook: null });
       return;
     }
     if (view === "feed") {
       if (feedStack.length <= 1) {
-        mergeState({
+        this.setState({
           view: "catalog",
           currentFeed: null,
           feedStack: [],
@@ -661,7 +598,7 @@ const OPDSDialog = () => {
       }
       const newStack = feedStack.slice(0, -1);
       const parentUrl = newStack[newStack.length - 1].url;
-      mergeState({
+      this.setState({
         isLoading: true,
         isLoadingMore: false,
         error: "",
@@ -669,16 +606,16 @@ const OPDSDialog = () => {
         searchQuery: "",
       });
       fetchOPDSFeed(parentUrl, currentCatalogAuth)
-        .then((feed) => mergeState({ currentFeed: feed, isLoading: false }))
+        .then((feed) => this.setState({ currentFeed: feed, isLoading: false }))
         .catch((err) => {
           const msg = err instanceof Error ? err.message : String(err);
-          mergeState({ isLoading: false, error: msg });
+          this.setState({ isLoading: false, error: msg });
         });
     }
   };
 
-  const handleSearch = async () => {
-    const { currentFeed, searchQuery, currentCatalogAuth } = stateRef.current;
+  handleSearch = async () => {
+    const { currentFeed, searchQuery, currentCatalogAuth } = this.state;
     if (!currentFeed?.searchTemplate || !searchQuery.trim()) return;
     let searchUrl = currentFeed.searchTemplate;
     if (!searchUrl.includes("searchTerms")) {
@@ -703,24 +640,22 @@ const OPDSDialog = () => {
       .replace("{searchTerms}", encodeURIComponent(searchQuery.trim()))
       .replace("%7BsearchTerms%7D", encodeURIComponent(searchQuery.trim()));
     if (!finalUrl.startsWith("http")) {
-      const baseUrl =
-        stateRef.current.feedStack[0]?.url || currentFeed?.url || "";
+      const baseUrl = this.state.feedStack[0]?.url || currentFeed?.url || "";
       if (baseUrl) {
         finalUrl = new URL(finalUrl, baseUrl).href;
       }
     }
-    mergeState({ isLoading: true, isLoadingMore: false, error: "" });
+    this.setState({ isLoading: true, isLoadingMore: false, error: "" });
     try {
       const feed = await fetchOPDSFeed(finalUrl, currentCatalogAuth);
-      setState((prev) => ({
-        ...prev,
+      this.setState((prev) => ({
         currentFeed: {
           ...feed,
           searchTemplate: prev.currentFeed?.searchTemplate || "",
         },
         feedStack: [
           ...prev.feedStack,
-          { url: finalUrl, title: t("Search") + ": " + searchQuery },
+          { url: finalUrl, title: this.props.t("Search") + ": " + searchQuery },
         ],
         isLoading: false,
         searchQuery: "",
@@ -728,10 +663,9 @@ const OPDSDialog = () => {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("404")) {
-        setState((prev) => ({
-          ...prev,
+        this.setState((prev) => ({
           currentFeed: {
-            title: t("Search") + ": " + searchQuery,
+            title: this.props.t("Search") + ": " + searchQuery,
             url: finalUrl,
             entries: [],
             links: [],
@@ -741,27 +675,27 @@ const OPDSDialog = () => {
             ...prev.feedStack,
             {
               url: finalUrl,
-              title: t("Search") + ": " + searchQuery,
+              title: this.props.t("Search") + ": " + searchQuery,
             },
           ],
           isLoading: false,
           searchQuery: "",
         }));
       } else {
-        mergeState({ isLoading: false, error: msg });
-        toast.error(t("Search failed") + ": " + msg);
+        this.setState({ isLoading: false, error: msg });
+        toast.error(this.props.t("Search failed") + ": " + msg);
       }
     }
   };
 
-  const handleDownloadBook = async (entry: OPDSEntry, link: OPDSLink) => {
-    const { currentCatalogAuth } = stateRef.current;
+  handleDownloadBook = async (entry: OPDSEntry, link: OPDSLink) => {
+    const { currentCatalogAuth } = this.state;
     const ext = DOWNLOAD_TYPES[link.type] || link.href.split(".").pop() || "";
     if (!supportedFormats.includes("." + ext)) {
-      toast.error(t("Unsupported file format") + ": " + link.type);
+      toast.error(this.props.t("Unsupported file format") + ": " + link.type);
       return;
     }
-    toast.loading(t("Downloading") + ": " + entry.title, {
+    toast.loading(this.props.t("Downloading") + ": " + entry.title, {
       id: "opds-download",
       position: "bottom-center",
     });
@@ -776,24 +710,24 @@ const OPDSDialog = () => {
       const fileName = entry.title.replace(/[/\\?%*:|"<>]/g, "-") + "." + ext;
       const file = new File([arrayBuffer], fileName);
       toast.dismiss("opds-download");
-      await importBookFunc(file);
+      await this.props.importBookFunc(file);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      toast.error(t("Import failed") + ": " + msg, {
+      toast.error(this.props.t("Import failed") + ": " + msg, {
         id: "opds-download",
       });
     }
   };
 
-  const handleAddCatalog = () => {
+  handleAddCatalog = () => {
     const {
       newCatalogUrl,
       newCatalogTitle,
       newCatalogUsername,
       newCatalogPassword,
-    } = stateRef.current;
+    } = this.state;
     if (!newCatalogUrl.trim()) {
-      toast.error(t("Please enter a valid URL"));
+      toast.error(this.props.t("Please enter a valid URL"));
       return;
     }
     const id = Date.now() + "";
@@ -806,8 +740,8 @@ const OPDSDialog = () => {
     };
     ConfigService.setObjectConfig(id, newCatalog, "opdsCatalogs");
     ConfigService.setListConfig(id, "opdsCatalogList");
-    mergeState({
-      userCatalogs: loadUserCatalogs(),
+    this.setState({
+      userCatalogs: this.loadUserCatalogs(),
       isAddingCatalog: false,
       newCatalogUrl: "",
       newCatalogTitle: "",
@@ -815,39 +749,39 @@ const OPDSDialog = () => {
       newCatalogPassword: "",
       isTesting: false,
     });
-    toast.success(t("Added successfully"));
+    toast.success(this.props.t("Added successfully"));
   };
 
-  const handleTestCatalog = async () => {
+  handleTestCatalog = async () => {
     const { newCatalogUrl, newCatalogUsername, newCatalogPassword } =
-      stateRef.current;
+      this.state;
     if (!newCatalogUrl.trim()) {
-      toast.error(t("Please enter a valid URL"));
+      toast.error(this.props.t("Please enter a valid URL"));
       return;
     }
-    mergeState({ isTesting: true });
+    this.setState({ isTesting: true });
     try {
       const auth =
         newCatalogUsername || newCatalogPassword
           ? { username: newCatalogUsername, password: newCatalogPassword }
           : null;
       await fetchOPDSFeed(newCatalogUrl.trim(), auth);
-      toast.success(t("Connection successful"));
+      toast.success(this.props.t("Connection successful"));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      toast.error(t("Connection failed") + ": " + msg);
+      toast.error(this.props.t("Connection failed") + ": " + msg);
     } finally {
-      mergeState({ isTesting: false });
+      this.setState({ isTesting: false });
     }
   };
 
-  const handleRemoveCatalog = (id: string) => {
+  handleRemoveCatalog = (id: string) => {
     ConfigService.deleteObjectConfig(id, "opdsCatalogs");
     ConfigService.deleteListConfig(id, "opdsCatalogList");
-    mergeState({ userCatalogs: loadUserCatalogs() });
+    this.setState({ userCatalogs: this.loadUserCatalogs() });
   };
 
-  const getDownloadLinks = (entry: OPDSEntry): OPDSLink[] => {
+  getDownloadLinks(entry: OPDSEntry): OPDSLink[] {
     return entry.links.filter(
       (l) =>
         ACQUISITION_RELS.some((rel) => l.rel === rel) &&
@@ -856,9 +790,9 @@ const OPDSDialog = () => {
             "." + l.href.split(".").pop()?.toLowerCase()
           ))
     );
-  };
+  }
 
-  const renderCatalogView = () => {
+  renderCatalogView() {
     const {
       userCatalogs,
       isAddingCatalog,
@@ -867,7 +801,7 @@ const OPDSDialog = () => {
       newCatalogUsername,
       newCatalogPassword,
       isTesting,
-    } = state;
+    } = this.state;
 
     return (
       <>
@@ -877,50 +811,50 @@ const OPDSDialog = () => {
             <input
               className="token-dialog-username-box"
               type="url"
-              placeholder={t("OPDS Catalog URL")}
+              placeholder={this.props.t("OPDS Catalog URL")}
               value={newCatalogUrl}
-              onChange={(e) => mergeState({ newCatalogUrl: e.target.value })}
-              onKeyDown={(e) => e.key === "Enter" && handleAddCatalog()}
+              onChange={(e) => this.setState({ newCatalogUrl: e.target.value })}
+              onKeyDown={(e) => e.key === "Enter" && this.handleAddCatalog()}
               autoFocus
             />
             <input
               className="token-dialog-username-box"
               type="text"
               placeholder={
-                t("Catalog Name") +
+                this.props.t("Catalog Name") +
                 " (" +
-                t("Optional") +
+                this.props.t("Optional") +
                 ")"
               }
               value={newCatalogTitle}
               onChange={(e) =>
-                mergeState({ newCatalogTitle: e.target.value })
+                this.setState({ newCatalogTitle: e.target.value })
               }
-              onKeyDown={(e) => e.key === "Enter" && handleAddCatalog()}
+              onKeyDown={(e) => e.key === "Enter" && this.handleAddCatalog()}
             />
             <input
               className="token-dialog-username-box"
               type="text"
               placeholder={
-                t("Username") + " (" + t("Optional") + ")"
+                this.props.t("Username") + " (" + this.props.t("Optional") + ")"
               }
               value={newCatalogUsername}
               onChange={(e) =>
-                mergeState({ newCatalogUsername: e.target.value })
+                this.setState({ newCatalogUsername: e.target.value })
               }
-              onKeyDown={(e) => e.key === "Enter" && handleAddCatalog()}
+              onKeyDown={(e) => e.key === "Enter" && this.handleAddCatalog()}
             />
             <input
               className="token-dialog-username-box"
               type="password"
               placeholder={
-                t("Password") + " (" + t("Optional") + ")"
+                this.props.t("Password") + " (" + this.props.t("Optional") + ")"
               }
               value={newCatalogPassword}
               onChange={(e) =>
-                mergeState({ newCatalogPassword: e.target.value })
+                this.setState({ newCatalogPassword: e.target.value })
               }
-              onKeyDown={(e) => e.key === "Enter" && handleAddCatalog()}
+              onKeyDown={(e) => e.key === "Enter" && this.handleAddCatalog()}
             />
             <div
               style={{
@@ -940,7 +874,7 @@ const OPDSDialog = () => {
                   opacity: isTesting ? 0.6 : 1,
                   pointerEvents: isTesting ? "none" : "auto",
                 }}
-                onClick={handleTestCatalog}
+                onClick={this.handleTestCatalog}
               >
                 {isTesting ? <Trans>Testing...</Trans> : <Trans>Test</Trans>}
               </span>
@@ -955,7 +889,7 @@ const OPDSDialog = () => {
                 <span
                   className="voice-add-cancel"
                   onClick={() =>
-                    mergeState({
+                    this.setState({
                       isAddingCatalog: false,
                       newCatalogUrl: "",
                       newCatalogTitle: "",
@@ -971,7 +905,7 @@ const OPDSDialog = () => {
                 <span
                   className="voice-add-confirm"
                   style={{ position: "static", fontSize: "14px" }}
-                  onClick={handleAddCatalog}
+                  onClick={this.handleAddCatalog}
                 >
                   <Trans>Add</Trans>
                 </span>
@@ -990,7 +924,7 @@ const OPDSDialog = () => {
               <div key={catalog.id} className="cloud-drive-item">
                 <span
                   className="cloud-drive-label"
-                  onClick={() => openCatalog(catalog)}
+                  onClick={() => this.openCatalog(catalog)}
                 >
                   {catalog.title}
                 </span>
@@ -999,12 +933,12 @@ const OPDSDialog = () => {
                   style={{ fontSize: "13px", marginRight: "8px" }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleRemoveCatalog(catalog.id);
+                    this.handleRemoveCatalog(catalog.id);
                   }}
                 ></span>
                 <span
                   className="icon-dropdown import-dialog-more-file"
-                  onClick={() => openCatalog(catalog)}
+                  onClick={() => this.openCatalog(catalog)}
                 ></span>
               </div>
             ))}
@@ -1023,9 +957,9 @@ const OPDSDialog = () => {
         )}
       </>
     );
-  };
+  }
 
-  const renderFeedView = () => {
+  renderFeedView() {
     const {
       currentFeed,
       isLoading,
@@ -1033,7 +967,7 @@ const OPDSDialog = () => {
       error,
       searchQuery,
       currentCatalogAuth,
-    } = state;
+    } = this.state;
 
     return (
       <>
@@ -1043,10 +977,10 @@ const OPDSDialog = () => {
             <input
               className="header-search-box"
               type="text"
-              placeholder={t("Search in catalog...")}
+              placeholder={this.props.t("Search in catalog...")}
               value={searchQuery}
-              onChange={(e) => mergeState({ searchQuery: e.target.value })}
-              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+              onChange={(e) => this.setState({ searchQuery: e.target.value })}
+              onKeyDown={(e) => e.key === "Enter" && this.handleSearch()}
             />
             <span
               className="header-search-text"
@@ -1054,7 +988,7 @@ const OPDSDialog = () => {
             >
               <span
                 className="icon-search header-search-icon"
-                onClick={handleSearch}
+                onClick={this.handleSearch}
               ></span>
             </span>
           </div>
@@ -1104,9 +1038,9 @@ const OPDSDialog = () => {
               className="cloud-drive-item opds-entry-row"
               onClick={() => {
                 if (entry.isNavigation) {
-                  navigateToEntry(entry);
+                  this.navigateToEntry(entry);
                 } else {
-                  mergeState({ view: "detail", selectedBook: entry });
+                  this.setState({ view: "detail", selectedBook: entry });
                 }
               }}
             >
@@ -1161,10 +1095,10 @@ const OPDSDialog = () => {
         )}
       </>
     );
-  };
+  }
 
-  const renderDetailView = () => {
-    const { selectedBook, currentCatalogAuth } = state;
+  renderDetailView() {
+    const { selectedBook, currentCatalogAuth } = this.state;
     if (!selectedBook) return null;
     const formatUpdated = (iso: string) => {
       if (!iso) return "";
@@ -1275,33 +1209,34 @@ const OPDSDialog = () => {
         )}
       </div>
     );
-  };
+  }
 
-  const renderTitle = () => {
-    const { view, feedStack } = state;
+  renderTitle() {
+    const { view, feedStack } = this.state;
     if (view === "catalog") return <Trans>From OPDS</Trans>;
     if (view === "detail") return <Trans>Book Detail</Trans>;
     if (feedStack.length > 0) return feedStack[feedStack.length - 1].title;
     return <Trans>From OPDS</Trans>;
-  };
+  }
 
-  const { view, selectedBook } = state;
-  const downloadLinks =
-    view === "detail" && selectedBook
-      ? getDownloadLinks(selectedBook)
-      : [];
+  render() {
+    const { view, selectedBook } = this.state;
+    const downloadLinks =
+      view === "detail" && selectedBook
+        ? this.getDownloadLinks(selectedBook)
+        : [];
 
     return (
       <div
         className="backup-page-container"
         style={{ height: "450px", top: "calc(50% - 225px)" }}
       >
-        <div className="backup-dialog-title">{renderTitle()}</div>
+        <div className="backup-dialog-title">{this.renderTitle()}</div>
 
-        <div className="import-dialog-option" onScroll={handleScroll}>
-          {view === "catalog" && renderCatalogView()}
-          {view === "feed" && renderFeedView()}
-          {view === "detail" && renderDetailView()}
+        <div className="import-dialog-option" onScroll={this.handleScroll}>
+          {view === "catalog" && this.renderCatalogView()}
+          {view === "feed" && this.renderFeedView()}
+          {view === "detail" && this.renderDetailView()}
         </div>
 
         {/* Bottom bar */}
@@ -1316,7 +1251,7 @@ const OPDSDialog = () => {
               <div
                 key={i}
                 className="new-version-open"
-                onClick={() => handleDownloadBook(selectedBook!, link)}
+                onClick={() => this.handleDownloadBook(selectedBook!, link)}
                 style={{
                   padding: "0px 0px",
                   fontSize: "12px",
@@ -1338,19 +1273,19 @@ const OPDSDialog = () => {
         )}
 
         {view !== "catalog" && (
-          <div className="import-dialog-back-button" onClick={handleBack}>
+          <div className="import-dialog-back-button" onClick={this.handleBack}>
             <Trans>Back to parent</Trans>
           </div>
         )}
 
-        <div className="backup-page-close-icon" onClick={handleClose}>
+        <div className="backup-page-close-icon" onClick={this.handleClose}>
           <span className="icon-close backup-close-icon"></span>
         </div>
 
         {view === "catalog" && (
           <div
             className="cloud-drive-item"
-            onClick={() => mergeState({ isAddingCatalog: true })}
+            onClick={() => this.setState({ isAddingCatalog: true })}
             style={{
               position: "absolute",
               bottom: "0",
@@ -1372,7 +1307,8 @@ const OPDSDialog = () => {
           </div>
         )}
       </div>
-  );
-};
+    );
+  }
+}
 
 export default OPDSDialog;

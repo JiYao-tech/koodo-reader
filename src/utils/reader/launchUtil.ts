@@ -41,18 +41,20 @@ export const initTheme = () => {
     //new user don't need to upgrade
     ConfigService.setItem("isUpgradedConfig", "yes");
     ConfigService.setItem("isUpgradedStorage", "yes");
-    if (!ConfigService.getReaderConfig("isHideBackground")) {
-      ConfigService.setReaderConfig("isHideBackground", "yes");
+    if (isNight) {
     }
   }
   syncNativeThemeSource(ConfigService.getReaderConfig("appSkin"));
 
-  const isNightSkin =
+  if (
     ConfigService.getReaderConfig("appSkin") === "night" ||
     (ConfigService.getReaderConfig("appSkin") === "system" &&
-      ConfigService.getReaderConfig("isOSNight") === "yes");
-  style.href = "./assets/styles/theme.css";
-  document.documentElement.dataset.theme = isNightSkin ? "dark" : "light";
+      ConfigService.getReaderConfig("isOSNight") === "yes")
+  ) {
+    style.href = "./assets/styles/dark.css";
+  } else {
+    style.href = "./assets/styles/default.css";
+  }
   document.head.appendChild(style);
 };
 export const initSystemFont = async () => {
@@ -86,7 +88,10 @@ export const applyCustomSystemFont = async () => {
         src: url("${url}");
       }
     `;
-    body.setAttribute("style", `font-family:"${systemFont}"!important`);
+    body.setAttribute(
+      "style",
+      `font-family:"${systemFont}"!important`
+    );
   } else {
     const styleEl = document.getElementById("custom-system-font-style");
     if (styleEl) styleEl.textContent = "";

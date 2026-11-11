@@ -1,13 +1,12 @@
-import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router-dom";
-import React, { useEffect, useRef, useState } from "react";
+import React from "react";
 import "./importLocal.css";
 import BookModel from "../../models/Book";
 import { Trans } from "react-i18next";
 import Dropzone from "react-dropzone";
-import JSZip from "jszip";
 import * as Kookit from "../../assets/lib/kookit.min";
+import { ImportLocalProps, ImportLocalState } from "./interface";
 import { isElectron } from "react-device-detect";
+import { withRouter } from "react-router-dom";
 import BookUtil from "../../utils/file/bookUtil";
 import toast from "react-hot-toast";
 import DOMPurify from "dompurify";
@@ -19,42 +18,20 @@ import CoverUtil from "../../utils/file/coverUtil";
 import { Readability } from "@mozilla/readability";
 import {
   calculateFileMD5,
-  clearComicTemp,
   getTextRules,
-  isFixedLayoutBook,
   supportedFormats,
   throttle,
-  vexComfirmAsync,
   vexPromptAsync,
 } from "../../utils/common";
 import DatabaseService from "../../utils/storage/databaseService";
 import { BookHelper } from "../../assets/lib/kookit.min";
-import { analyzeBookTitle } from "../../utils/request/reader";
-import { convertCajToPdf, isCajFormat } from "../../utils/file/cajUtil";
-import {
-  buildImportRecords,
-  importNoteRecords,
-} from "../../utils/file/importData";
-import { useAppStore } from "../../store/useAppStore";
-
-export interface ImportLocalProps {
-  handleDrag: (isDrag: boolean) => void;
-}
-
-export interface ImportLocalState {
-  isOpenFile: boolean;
-  isMoreOptionsVisible: boolean;
-  width: number;
-}
 
 // Convert supportedFormats to react-dropzone v14+ accept format
 // Key is MIME type, value is array of file extensions
 const supportedFormatsAccept = supportedFormats.reduce<
   Record<string, string[]>
 >((obj, ext) => {
-  const extension = ext.replace(".", "");
-  // CAJ and OFD have no widely registered MIME type, so the picker needs one from here.
-  const mimeType = CommonTool.getMimeType(extension);
+  const mimeType = CommonTool.getMimeType(ext.replace(".", ""));
   if (mimeType) {
     if (!obj[mimeType]) obj[mimeType] = [];
     obj[mimeType].push(ext);
@@ -63,87 +40,19 @@ const supportedFormatsAccept = supportedFormats.reduce<
 }, {});
 declare var window: any;
 let clickFilePath = "";
-const escapeHtml = (text: string) =>
-  text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-// Comic 封面规则与 kookit comic-book.js 保持一致：取自然排序后的第一张图片
-const COMIC_IMAGE_EXTS = [
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".gif",
-  ".webp",
-  ".svg",
-  ".bmp",
-  ".tif",
-  ".tiff",
-  ".jfif",
-  ".jpe",
-  ".heic",
-  ".heif",
-  ".avif",
-];
-const getComicImageExt = (name: string) => {
-  const ext = name.split(".").pop()?.toLowerCase() || "png";
-  return ext === "jpg" ? "jpeg" : ext;
-};
 
-const ImportLocal = (props: ImportLocalProps) => {
-  const books = useAppStore((s) => s.manager.books);
-  const cloudSyncFunc = useAppStore((s) => s.book.cloudSyncFunc);
-  const isCollapsed = useAppStore((s) => s.sidebar.isCollapsed);
-  const deletedBooks = useAppStore((s) => s.manager.deletedBooks);
-  const mode = useAppStore((s) => s.sidebar.mode);
-  const shelfTitle = useAppStore((s) => s.sidebar.shelfTitle);
-  const isAuthed = useAppStore((s) => s.manager.isAuthed);
-  const handleFetchBooks = useAppStore((s) => s.handleFetchBooks);
-  const handleReadingBook = useAppStore((s) => s.handleReadingBook);
-  const handleImportDialog = useAppStore((s) => s.handleImportDialog);
-  const handleOPDSDialog = useAppStore((s) => s.handleOPDSDialog);
-  const handleAutoImportDialog = useAppStore((s) => s.handleAutoImportDialog);
-  const handleImportBookFunc = useAppStore((s) => s.handleImportBookFunc);
-  const { t } = useTranslation();
-  const navigate = useNavigate();
-  const [state, setStateObj] = useState<ImportLocalState>(() => ({
-    isOpenFile: false,
-    width: document.body.clientWidth,
-    isMoreOptionsVisible: false,
-  }));
-  const stateRef = useRef<ImportLocalState>(state);
-  const setState = (
-    patch:
-      | Partial<ImportLocalState>
-      | ((prev: ImportLocalState) => Partial<ImportLocalState>)
-  ) => {
-    const prev = stateRef.current;
-    const partial =
-      typeof patch === "function"
-        ? (patch as (prev: ImportLocalState) => Partial<ImportLocalState>)(
-            prev
-          )
-        : patch;
-    const next = { ...prev, ...partial };
-    stateRef.current = next;
-    setStateObj(next);
-  };
-  const resizeHandlerRef = useRef<(() => void) | null>(null);
-  const importUrlHandlerRef = useRef<((config: any) => void) | null>(null);
-  const getMd5WithBrowserRef = useRef<((file: File) => Promise<void>) | null>(
-    null
-  );
-  const handleFilePathRef = useRef<
-    ((filePath: string) => Promise<void>) | null
-  >(null);
-  const handleURLImportRef = useRef<
-    ((e?: React.MouseEvent, externalUrl?: string) => Promise<void>) | null
-  >(null);
+class ImportLocal extends React.Component<ImportLocalProps, ImportLocalState> {
+  resizeHandler: (() => void) | null = null;
 
-  useEffect(() => {
-    let focusHandler: (() => void) | null = null;
+  constructor(props: ImportLocalProps) {
+    super(props);
+    this.state = {
+      isOpenFile: false,
+      width: document.body.clientWidth,
+      isMoreOptionsVisible: false,
+    };
+  }
+  componentDidMount() {
     if (isElectron) {
       const ipcRenderer = window.electronAPI;
       if (!ConfigService.getItem("storageLocation")) {
@@ -155,130 +64,90 @@ const ImportLocal = (props: ImportLocalProps) => {
 
       const filePath = ipcRenderer.sendSync("get-file-data");
       if (filePath && filePath !== ".") {
-        handleFilePathRef.current?.(filePath);
+        this.handleFilePath(filePath);
       }
-      focusHandler = () => {
-        const _filePath = ipcRenderer.sendSync("get-file-data");
-        if (_filePath && _filePath !== ".") {
-          handleFilePathRef.current?.(_filePath);
-        }
-      };
-      window.addEventListener("focus", focusHandler, false);
+      window.addEventListener(
+        "focus",
+        () => {
+          const _filePath = ipcRenderer.sendSync("get-file-data");
+          if (_filePath && _filePath !== ".") {
+            this.handleFilePath(_filePath);
+          }
+        },
+        false
+      );
 
-      importUrlHandlerRef.current = async (config: any) => {
+      ipcRenderer.on("import-url-from-link", (config: any) => {
         const rawUrl = config?.url;
         if (!rawUrl || typeof rawUrl !== "string") return;
-        const confirmed = await vexComfirmAsync(
-          t(
-            "Do you want to download and import the book from this URL?"
-          ) +
-            "<br><span style='word-break:break-all'>" +
-            escapeHtml(rawUrl) +
-            "</span>",
-          "Confirm",
-          "Cancel"
-        );
-        if (!confirmed) {
-          toast.error(t("Import cancelled"));
-          return;
-        }
-        handleURLImportRef.current?.(undefined, rawUrl);
-      };
-      ipcRenderer.on("import-url-from-link", importUrlHandlerRef.current);
+        this.handleURLImport(undefined as any, rawUrl);
+      });
     }
-    resizeHandlerRef.current = throttle(() => {
-      setState({ width: document.body.clientWidth });
+    this.resizeHandler = throttle(() => {
+      this.setState({ width: document.body.clientWidth });
     });
-    const resizeHandler = resizeHandlerRef.current;
-    window.addEventListener("resize", resizeHandler);
-    handleImportBookFunc((file: File) =>
-      getMd5WithBrowserRef.current!(file)
-    );
-
-    return () => {
-      if (focusHandler) {
-        window.removeEventListener("focus", focusHandler);
-        focusHandler = null;
-      }
-      if (importUrlHandlerRef.current) {
-        window.electronAPI.removeListener(
-          "import-url-from-link",
-          importUrlHandlerRef.current
-        );
-        importUrlHandlerRef.current = null;
-      }
-      if (resizeHandlerRef.current) {
-        window.removeEventListener("resize", resizeHandlerRef.current);
-        resizeHandlerRef.current = null;
-      }
-    };
-  }, []);
-  const handleFilePath = async (filePath: string) => {
+    window.addEventListener("resize", this.resizeHandler);
+    this.props.handleImportBookFunc(this.getMd5WithBrowser);
+  }
+  componentWillUnmount() {
+    if (this.resizeHandler) {
+      window.removeEventListener("resize", this.resizeHandler);
+      this.resizeHandler = null;
+    }
+  }
+  handleFilePath = async (filePath: string) => {
     clickFilePath = filePath;
     const fileName = window.electronAPI.path.basename(filePath);
     const stat = window.electronAPI.fs.statSync(filePath);
-    const tempFile = new File([], fileName);
+    const tempFile: any = new File([], fileName);
     tempFile.path = filePath;
-    Object.defineProperty(tempFile, "size", {
-      value: stat.size,
-      writable: true,
-      configurable: true,
-    });
+    tempFile.size = stat.size;
     let md5 = await calculateFileMD5(tempFile);
 
     let repeatBook: BookModel | null = await BookUtil.getBookByMd5(md5);
     if (repeatBook) {
-      handleJump(repeatBook);
+      this.handleJump(repeatBook);
       return;
     }
 
-    const fileTemp = new File([], fileName);
+    const fileTemp: any = new File([], fileName);
     fileTemp.path = filePath;
-    Object.defineProperty(fileTemp, "size", {
-      value: stat.size,
-      writable: true,
-      configurable: true,
-    });
+    fileTemp.size = stat.size;
 
-    setState({ isOpenFile: true });
-    await getMd5WithBrowser(fileTemp);
+    this.setState({ isOpenFile: true }, async () => {
+      await this.getMd5WithBrowser(fileTemp);
+    });
   };
-  handleFilePathRef.current = handleFilePath;
-  const handleJump = (book: BookModel) => {
+  handleJump = (book: BookModel) => {
     ConfigService.setItem("tempBook", JSON.stringify(book));
     BookUtil.redirectBook(book);
-    navigate("/manager/home");
+    this.props.history.push("/manager/home");
   };
-  const handleAddBook = (
+  handleAddBook = (
     book: BookModel,
     buffer: ArrayBuffer,
-    sourcePath?: string,
-    isConverted = false
+    sourcePath?: string
   ) => {
     return new Promise<void>(async (resolve) => {
       toast.loading(
-        t("Importing") + ": " + book.name.substring(0, 50),
+        this.props.t("Importing") + ": " + book.name.substring(0, 50),
         {
           id: "add-book",
         }
       );
       let isImportPath =
         ConfigService.getReaderConfig("isImportPath") === "yes";
-      // A converted book has no readable source file, so its PDF always has to
-      // be written into the library; opening it in place is not an option.
-      const isPreventAdd =
-        !isConverted && ConfigService.getReaderConfig("isPreventAdd") === "yes";
       if (isElectron && isImportPath) {
         const fs = window.electronAPI.fs;
         if (!book.path || !fs.existsSync(book.path)) {
           isImportPath = false;
         }
       }
-      if (stateRef.current.isOpenFile) {
-        if (isPreventAdd) {
+      if (this.state.isOpenFile) {
+        if (ConfigService.getReaderConfig("isPreventAdd") === "yes") {
           //ignore
         } else if (
-          isAuthed &&
+          this.props.isAuthed &&
           ConfigService.getItem("defaultSyncOption")
         ) {
           await BookUtil.addBook(
@@ -300,16 +169,16 @@ const ImportLocal = (props: ImportLocalProps) => {
           );
           await CoverUtil.addCover(book);
         }
-        if (isPreventAdd) {
-          handleJump(book);
-          setState({ isOpenFile: false });
+        if (ConfigService.getReaderConfig("isPreventAdd") === "yes") {
+          this.handleJump(book);
+          this.setState({ isOpenFile: false });
           toast.dismiss("add-book");
           return resolve();
         }
       } else {
         if (
           !isImportPath ||
-          (isAuthed && ConfigService.getItem("defaultSyncOption"))
+          (this.props.isAuthed && ConfigService.getItem("defaultSyncOption"))
         ) {
           await BookUtil.addBook(
             book.key,
@@ -322,20 +191,20 @@ const ImportLocal = (props: ImportLocalProps) => {
         await CoverUtil.addCover(book);
       }
 
-      handleReadingBook(book);
+      this.props.handleReadingBook(book);
       ConfigService.setListConfig(book.key, "recentBooks");
       DatabaseService.saveRecord(book, "books")
         .then(() => {
-          handleFetchBooks();
-          if (mode === "shelf") {
+          this.props.handleFetchBooks();
+          if (this.props.mode === "shelf") {
             ConfigService.setMapConfig(
-              shelfTitle,
+              this.props.shelfTitle,
               book.key,
               "shelfList"
             );
           }
           toast.success(
-            t("Addition successful") +
+            this.props.t("Addition successful") +
               ": " +
               book.name.substring(0, 50),
             {
@@ -343,23 +212,23 @@ const ImportLocal = (props: ImportLocalProps) => {
             }
           );
           setTimeout(() => {
-            stateRef.current.isOpenFile && handleJump(book);
+            this.state.isOpenFile && this.handleJump(book);
             if (
               ConfigService.getReaderConfig("isOpenInMain") === "yes" &&
-              stateRef.current.isOpenFile
+              this.state.isOpenFile
             ) {
-              setState({ isOpenFile: false });
+              this.setState({ isOpenFile: false });
               return;
             }
-            setState({ isOpenFile: false });
-            navigate("/manager/home");
+            this.setState({ isOpenFile: false });
+            this.props.history.push("/manager/home");
           }, 100);
           return resolve();
         })
         .catch((error) => {
           console.error(error, book.name);
           toast.error(
-            t("Import failed") + ": " + book.name.substring(0, 50),
+            this.props.t("Import failed") + ": " + book.name.substring(0, 50),
             {
               duration: 4000,
               id: "add-book",
@@ -370,37 +239,18 @@ const ImportLocal = (props: ImportLocalProps) => {
     });
   };
 
-  const analyzeBookMetadata = async (book: BookModel, bookName: string) => {
-    if (
-      ConfigService.getReaderConfig("isAIAnalyzeTitle") !== "yes" ||
-      !isAuthed ||
-      book.name !== bookName
-    ) {
-      return;
-    }
-    try {
-      const response = await analyzeBookTitle(book.name);
-      if (response && response.code === 200 && response.data?.name) {
-        book.name = response.data.name;
-        book.author = response.data.author || book.author;
-      }
-    } catch (error) {
-      console.error(error, bookName);
-    }
-  };
-
-  const getMd5WithBrowser = async (file: File) => {
+  getMd5WithBrowser = async (file: any) => {
     return new Promise<void>(async (resolve) => {
       const md5 = await calculateFileMD5(file);
       if (!md5) {
         console.error("md5 error", file.name);
-        toast.error(t("Import failed") + ": " + file.name, {
+        toast.error(this.props.t("Import failed") + ": " + file.name, {
           duration: 4000,
         });
         return resolve();
       } else {
         try {
-          await handleBook(file, md5);
+          await this.handleBook(file, md5);
         } catch (error) {
           const errorMessage =
             error instanceof Error ? error.message : String(error);
@@ -413,9 +263,7 @@ const ImportLocal = (props: ImportLocalProps) => {
     });
   };
 
-  getMd5WithBrowserRef.current = getMd5WithBrowser;
-
-  const handleBook = (file: File, md5: string) => {
+  handleBook = (file: any, md5: string) => {
     let extension = (file.name as string)
       .split(".")
       .reverse()[0]
@@ -426,18 +274,18 @@ const ImportLocal = (props: ImportLocalProps) => {
       let repeatBook: BookModel | null = await BookUtil.getBookByMd5(md5);
       if (repeatBook) {
         isRepeat = true;
-        if (books && books.length > 0) {
-          books.forEach((item) => {
+        if (this.props.books && this.props.books.length > 0) {
+          this.props.books.forEach((item) => {
             if (item.key === repeatBook!.key) {
-              toast.error(t("Duplicate book"));
+              toast.error(this.props.t("Duplicate book"));
               return resolve();
             }
           });
         }
-        if (deletedBooks && deletedBooks.length > 0) {
-          deletedBooks.forEach((item) => {
+        if (this.props.deletedBooks && this.props.deletedBooks.length > 0) {
+          this.props.deletedBooks.forEach((item) => {
             if (item.key === repeatBook!.key) {
-              toast.error(t("Duplicate book in trash bin"));
+              toast.error(this.props.t("Duplicate book in trash bin"));
               return resolve();
             }
           });
@@ -445,56 +293,29 @@ const ImportLocal = (props: ImportLocalProps) => {
         return resolve();
       }
       if (!isRepeat) {
-        // Pick the first candidate path that actually exists on disk.
-        // There are two candidates:
-        // 1. file.path - real disk path for drag & drop / dialog import,
-        //    but a virtual cloud path for cloud import;
-        // 2. clickFilePath - path captured when opening a book by click.
-        const fs = isElectron ? window.electronAPI.fs : null;
-        const candidates = [file.path, clickFilePath];
-        let sourcePath = "";
-        for (const candidate of candidates) {
-          if (isElectron && candidate && fs.existsSync(candidate)) {
-            sourcePath = candidate;
-            break;
-          }
-        }
-        // Path only used for the database record, never for file IO.
-        // Keeps the original path (or URL) when it can't be verified on disk,
-        // falling back to the original file name, so book.path is never empty.
-        const recordPath = sourcePath || file.path || file.name;
+        // Electron: read the file content from disk directly to avoid
+        // keeping the whole file in memory via FileReader.
+        const sourcePath: string = isElectron
+          ? (file as any).path || clickFilePath
+          : "";
         if (sourcePath) {
           try {
-            if (
-              extension.toUpperCase() === "CBZ" ||
-              extension.toUpperCase() === "CBT"
-            ) {
-              await handleComicImport(
-                file,
-                bookName,
-                extension,
-                md5,
-                sourcePath,
-                resolve
-              );
-              return;
-            }
             const content = window.electronAPI.fs.readFileSync(sourcePath);
             const file_content = content.buffer as ArrayBuffer;
             const realSize = content.byteLength;
-            await processBookContent(
+            await this.processBookContent(
+              file,
               bookName,
               extension,
               md5,
               file_content,
               file.size || realSize,
               sourcePath,
-              recordPath,
               resolve
             );
           } catch (error) {
             console.error(error, bookName);
-            toast.error(t("Import failed") + ": " + bookName, {
+            toast.error(this.props.t("Import failed") + ": " + bookName, {
               duration: 4000,
             });
             return resolve();
@@ -505,26 +326,26 @@ const ImportLocal = (props: ImportLocalProps) => {
         reader.onload = async (event) => {
           if (!event.target) {
             console.error("e.target error", bookName);
-            toast.error(t("Import failed") + ": " + bookName, {
+            toast.error(this.props.t("Import failed") + ": " + bookName, {
               duration: 4000,
             });
             return resolve();
           }
-          const file_content = event.target.result as ArrayBuffer;
-          await processBookContent(
+          const file_content = (event.target as any).result;
+          await this.processBookContent(
+            file,
             bookName,
             extension,
             md5,
             file_content,
             file.size,
-            sourcePath,
-            recordPath,
+            file.path || clickFilePath,
             resolve
           );
         };
         reader.onerror = () => {
           console.error("reader error", bookName);
-          toast.error(t("Import failed") + ": " + bookName, {
+          toast.error(this.props.t("Import failed") + ": " + bookName, {
             duration: 4000,
           });
           return resolve();
@@ -534,269 +355,18 @@ const ImportLocal = (props: ImportLocalProps) => {
     });
   };
 
-  const handleComicImport = async (
-    file: File,
-    bookName: string,
-    extension: string,
-    md5: string,
-    sourcePath: string,
-    resolve: (value: void) => void
-  ) => {
-    try {
-      if (!isElectron) {
-        toast.error(t("Import failed") + ": " + bookName, {
-          duration: 4000,
-        });
-        return resolve();
-      }
-      const ipcRenderer = window.electronAPI;
-      const fs = window.electronAPI.fs;
-      const isZip = extension.toUpperCase() === "CBZ";
-      // 只读取归档索引，不解压完整文件
-      const entryList: {
-        entryPath: string;
-        size: number;
-        fileName: string;
-      }[] = await ipcRenderer.invoke(
-        isZip ? "list-zip-file" : "list-tar-file",
-        { filePath: sourcePath }
-      );
-      const images = entryList
-        .filter((entry) =>
-          COMIC_IMAGE_EXTS.some((ext) =>
-            entry.entryPath.toLowerCase().endsWith(ext)
-          )
-        )
-        .sort((a, b) =>
-          a.entryPath.localeCompare(b.entryPath, undefined, {
-            numeric: true,
-            sensitivity: "base",
-          })
-        );
-      if (images.length === 0) {
-        throw new Error(t("No image found in archive"));
-      }
-      const coverEntry = images[0].entryPath;
-      const extracted: string[] = await ipcRenderer.invoke(
-        isZip ? "unzip-file" : "untar-file",
-        { filePath: sourcePath, entries: [coverEntry] }
-      );
-      const extractedPath =
-        Array.isArray(extracted) && extracted.length > 0 ? extracted[0] : "";
-      if (!extractedPath || !fs.existsSync(extractedPath)) {
-        throw new Error(t("Extract cover failed"));
-      }
-      const buf = fs.readFileSync(extractedPath);
-      clearComicTemp();
-      const cover = `data:image/${getComicImageExt(
-        coverEntry
-      )};base64,${CommonTool.arrayBufferToBase64(buf)}`;
-      const stat = fs.statSync(sourcePath);
-      const key = new Date().getTime() + "" + Math.floor(Math.random() * 1000);
-      const book = new BookModel(
-        key,
-        bookName,
-        "",
-        "",
-        md5,
-        cover,
-        extension.toUpperCase(),
-        "",
-        stat.size || file.size || 0,
-        images.length,
-        sourcePath,
-        ""
-      );
-      await analyzeBookMetadata(book, bookName);
-      await handleAddBook(book, new ArrayBuffer(0), sourcePath);
-      return resolve();
-    } catch (error) {
-      console.error(error, bookName);
-      toast.error(t("Import failed") + ": " + bookName, {
-        duration: 4000,
-      });
-      return resolve();
-    }
-  };
-
-  const processBookContent = async (
+  processBookContent = async (
+    file: any,
     bookName: string,
     extension: string,
     md5: string,
     file_content: ArrayBuffer,
     fileSize: number,
     filePath: string,
-    recordPath: string,
     resolve: (value: void) => void
   ) => {
-    if (extension === "kdz") {
-      return await handleKdzBook(
-        bookName,
-        file_content,
-        recordPath,
-        resolve
-      );
-    }
-    await importBookSource(
-      bookName,
-      extension,
-      md5,
-      file_content,
-      fileSize,
-      filePath,
-      recordPath,
-      false
-    );
-    return resolve();
-  };
-
-  // 解析 kdz 图书包：解包出书籍源文件走正常导入链路，随后导入包内笔记/高亮/生词
-  const handleKdzBook = async (
-    bookName: string,
-    file_content: ArrayBuffer,
-    _recordPath: string,
-    resolve: (value: void) => void
-  ) => {
-    try {
-      const zip = await JSZip.loadAsync(file_content);
-      const innerEntry = Object.entries(zip.files).find(([name, file]) => {
-        if (file.dir) return false;
-        const innerExt = name.split(".").pop()?.toLowerCase();
-        return (
-          innerExt && innerExt !== "kdz" && supportedFormats.includes(`.${innerExt}`)
-        );
-      });
-      if (!innerEntry) {
-        throw new Error("Invalid kdz package");
-      }
-      const innerEntryName = innerEntry[0];
-      const innerName = innerEntryName.split("/").pop() || innerEntryName;
-      const innerExt = innerName.split(".").pop()?.toLowerCase() || "";
-      const innerBuffer = await innerEntry[1].async("arraybuffer");
-      const innerMd5 = await calculateFileMD5(
-        new File([innerBuffer], innerName)
-      );
-      if (!innerMd5) {
-        throw new Error("Md5 error: " + innerName);
-      }
-      const repeatBook: BookModel | null = await BookUtil.getBookByMd5(innerMd5);
-      if (repeatBook) {
-        toast.error(t("Duplicate book"));
-        return resolve();
-      }
-      const innerBookName = innerName.substring(
-        0,
-        innerName.length - innerExt.length - 1
-      );
-      // 先校验包内笔记/高亮/生词数据，避免书籍已入库但数据损坏的半导入状态
-      const records = await parseKdzRecords(zip);
-      const innerBook = await importBookSource(
-        innerBookName,
-        innerExt,
-        innerMd5,
-        innerBuffer,
-        innerBuffer.byteLength,
-        // 书籍源文件在包内，磁盘上无可引用的原始路径，
-        // 处理方式与 CAJ 转换后的 PDF 一致，必须写入书库
-        "",
-        "",
-        false
-      );
-      if (!innerBook || !innerBook.key) {
-        return resolve();
-      }
-      if (records.length > 0) {
-        const preparedRecords = buildImportRecords(records);
-        if (!preparedRecords) {
-          console.error("Invalid data in kdz package: " + bookName);
-          toast.error(t("Invalid data"));
-          return resolve();
-        }
-        const result = await importNoteRecords(preparedRecords, {
-          targetBookKey: (innerBook as BookModel).key,
-        });
-        if (result === "failed") {
-          toast.error(t("Failed to import"));
-          return resolve();
-        }
-        const { imported, skipped } = result as {
-          imported: number;
-          skipped: number;
-        };
-        toast.success(
-          t(
-            "Imported {{imported}} records, skipped {{skipped}} existing records",
-            { imported, skipped }
-          )
-        );
-      }
-      return resolve();
-    } catch (error) {
-      console.error(error, bookName);
-      toast.error(t("Import failed") + ": " + bookName, {
-        duration: 4000,
-      });
-      return resolve();
-    }
-  };
-
-  // 解析 kdz 包内的 notes.json / highlights.json / words.json
-  const parseKdzRecords = async (zip: JSZip): Promise<any[]> => {
-    const jsonNames = ["notes.json", "highlights.json", "words.json"];
-    const rawRecords: any[] = [];
-    for (const jsonName of jsonNames) {
-      const entry = zip.file(jsonName);
-      if (!entry) {
-        continue;
-      }
-      const content = await entry.async("string");
-      const parsed = JSON.parse(content);
-      if (!Array.isArray(parsed)) {
-        throw new Error("Invalid data in kdz package: " + jsonName);
-      }
-      rawRecords.push(...parsed);
-    }
-    return rawRecords;
-  };
-
-  // 从文件内容生成书籍元数据并入库（原 processBookContent 的核心逻辑）
-  const importBookSource = async (
-    bookName: string,
-    extension: string,
-    md5: string,
-    file_content: ArrayBuffer,
-    fileSize: number,
-    filePath: string,
-    recordPath: string,
-    isConverted = false
-  ): Promise<BookModel | null> => {
     let result: BookModel;
     try {
-      if (isCajFormat(extension)) {
-        toast.loading(
-          t("Converting to PDF") + ": " + bookName.substring(0, 50),
-          { id: "add-book" }
-        );
-        const reportProgress = throttle((fraction: number) => {
-          toast.loading(
-            t("Converting to PDF") +
-              " (" +
-              Math.round(fraction * 100) +
-              "%)" +
-              ": " +
-              bookName.substring(0, 50),
-            { id: "add-book" }
-          );
-        }, 500);
-        file_content = await convertCajToPdf(file_content, reportProgress);
-        // Everything downstream handles the converted bytes as a regular PDF
-        // import; the original .caj is not referenced again.
-        extension = "pdf";
-        fileSize = file_content.byteLength;
-        filePath = "";
-        recordPath = "";
-        isConverted = true;
-      }
       let rendition = BookHelper.getRendition(
         file_content,
         {
@@ -824,15 +394,14 @@ const ImportLocal = (props: ImportLocalProps) => {
         extension,
         md5,
         fileSize,
-        recordPath,
+        filePath,
         file_content,
         rendition
       );
 
       if (
         ConfigService.getReaderConfig("isPrecacheBook") === "yes" &&
-        extension !== "pdf" &&
-        !isFixedLayoutBook(result)
+        extension !== "pdf"
       ) {
         let cache = await rendition.preCache(file_content);
         if (cache !== "err" || cache) {
@@ -841,10 +410,10 @@ const ImportLocal = (props: ImportLocalProps) => {
       }
     } catch (error) {
       console.error(error, bookName);
-      toast.error(t("Import failed") + ": " + bookName, {
+      toast.error(this.props.t("Import failed") + ": " + bookName, {
         duration: 4000,
       });
-      return null;
+      return resolve();
     }
 
     clickFilePath = "";
@@ -852,29 +421,27 @@ const ImportLocal = (props: ImportLocalProps) => {
     // get metadata failed
     if (!result || !result.key) {
       console.error("get metadata failed", bookName);
-      toast.error(t("Import failed") + ": " + bookName, {
+      toast.error(this.props.t("Import failed") + ": " + bookName, {
         duration: 4000,
       });
-      return null;
+      return resolve();
     }
-    await analyzeBookMetadata(result as BookModel, bookName);
-    await handleAddBook(
+    await this.handleAddBook(
       result as BookModel,
       file_content as ArrayBuffer,
-      filePath,
-      isConverted
+      file.path || filePath
     );
 
-    return result as BookModel;
+    return resolve();
   };
 
-  const decodeHtmlEntities = (value: string) => {
+  decodeHtmlEntities = (value: string) => {
     if (!value) return "";
     const doc = new DOMParser().parseFromString(value, "text/html");
     return doc.documentElement.textContent || value;
   };
 
-  const escapeHtmlValue = (value: string) => {
+  escapeHtml = (value: string) => {
     return (value || "")
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
@@ -883,7 +450,7 @@ const ImportLocal = (props: ImportLocalProps) => {
       .replace(/'/g, "&#039;");
   };
 
-  const makeUrlsAbsolute = (rootDoc: Document, baseUrl: string) => {
+  makeUrlsAbsolute = (rootDoc: Document, baseUrl: string) => {
     const toAbs = (value: string | null) => {
       if (!value) return value;
       if (value.startsWith("data:")) return value;
@@ -918,7 +485,7 @@ const ImportLocal = (props: ImportLocalProps) => {
     });
   };
 
-  const fetchImageAsDataUrl = async (imageUrl: string): Promise<string | null> => {
+  fetchImageAsDataUrl = async (imageUrl: string): Promise<string | null> => {
     if (!imageUrl || imageUrl.startsWith("data:")) {
       return imageUrl || null;
     }
@@ -943,7 +510,7 @@ const ImportLocal = (props: ImportLocalProps) => {
     }
   };
 
-  const resolveImageUrl = (img: Element): string | null => {
+  resolveImageUrl = (img: Element): string | null => {
     const candidates = [
       img.getAttribute("src"),
       img.getAttribute("data-src"),
@@ -961,14 +528,14 @@ const ImportLocal = (props: ImportLocalProps) => {
     return null;
   };
 
-  const embedImagesAsBase64 = async (rootDoc: Document, toastId: string) => {
+  embedImagesAsBase64 = async (rootDoc: Document, toastId: string) => {
     const images = Array.from(rootDoc.querySelectorAll("img"));
     const total = images.length;
     if (total === 0) return;
 
     for (let i = 0; i < images.length; i++) {
       const img = images[i];
-      const imageUrl = resolveImageUrl(img);
+      const imageUrl = this.resolveImageUrl(img);
       if (!imageUrl) continue;
 
       if (imageUrl.startsWith("data:")) {
@@ -976,7 +543,7 @@ const ImportLocal = (props: ImportLocalProps) => {
         continue;
       }
 
-      const dataUrl = await fetchImageAsDataUrl(imageUrl);
+      const dataUrl = await this.fetchImageAsDataUrl(imageUrl);
       if (dataUrl) {
         img.setAttribute("src", dataUrl);
         img.removeAttribute("data-src");
@@ -986,19 +553,19 @@ const ImportLocal = (props: ImportLocalProps) => {
       }
 
       const pct = Math.round(((i + 1) / total) * 100);
-      toast.loading(t("Downloading") + ": " + pct + "%", {
+      toast.loading(this.props.t("Downloading") + ": " + pct + "%", {
         id: toastId,
         position: "bottom-center",
       });
     }
   };
 
-  const importHtmlFromURL = async (
+  importHtmlFromURL = async (
     url: string,
     urlFileName: string,
     toastId: string
   ) => {
-    toast.loading(t("Downloading") + ": 0%", {
+    toast.loading(this.props.t("Downloading") + ": 0%", {
       id: toastId,
       position: "bottom-center",
     });
@@ -1020,7 +587,7 @@ const ImportLocal = (props: ImportLocalProps) => {
 
     if (!looksLikeHtml) {
       throw new Error(
-        t("Unsupported file format") +
+        this.props.t("Unsupported file format") +
           ": " +
           (contentType || "unknown")
       );
@@ -1033,7 +600,7 @@ const ImportLocal = (props: ImportLocalProps) => {
     // 1) Try better main-content extraction (more aggressive clipping).
     let extracted: any = null;
     try {
-      const reader = new Readability(doc);
+      const reader = new Readability(doc as any);
       extracted = reader.parse();
     } catch (e) {
       extracted = null;
@@ -1044,7 +611,7 @@ const ImportLocal = (props: ImportLocalProps) => {
       doc.title ||
       (urlFileName || "book").replace(/\.[^/.]+$/, "") ||
       "book";
-    const decodedTitle = decodeHtmlEntities(rawTitle).trim() || "book";
+    const decodedTitle = this.decodeHtmlEntities(rawTitle).trim() || "book";
 
     // 2) Prefer extracted content; fallback to body html.
     const extractedContent = extracted?.content || doc.body?.innerHTML || "";
@@ -1052,8 +619,8 @@ const ImportLocal = (props: ImportLocalProps) => {
     // 3) Resolve relative links/images to absolute using the original URL.
     const contentDoc = parser.parseFromString(extractedContent, "text/html");
     if (contentDoc?.body) {
-      makeUrlsAbsolute(contentDoc, url);
-      await embedImagesAsBase64(contentDoc, toastId);
+      this.makeUrlsAbsolute(contentDoc, url);
+      await this.embedImagesAsBase64(contentDoc, toastId);
     }
 
     // 4) Sanitize & rebuild as a standalone html "book" file.
@@ -1064,56 +631,56 @@ const ImportLocal = (props: ImportLocalProps) => {
       }
     );
 
-    const safeTitle = escapeHtmlValue(decodedTitle);
+    const safeTitle = this.escapeHtml(decodedTitle);
     const finalHtmlFileName = `${decodedTitle.replace(/[/\\?%*:|"<>]/g, "-")}.html`;
     const finalHtml = `<!doctype html><html><head><meta charset="utf-8"/><title>${safeTitle}</title></head><body>${sanitizedBody}</body></html>`;
 
     const blob = new Blob([new TextEncoder().encode(finalHtml)], {
       type: "text/html",
     });
-    const file = new File([blob], finalHtmlFileName);
+    const file: any = new File([blob], finalHtmlFileName);
     file.path = url; // Helps bookkeeping; works in Electron, no harm in browser.
 
     toast.dismiss(toastId);
-    await getMd5WithBrowser(file);
+    await this.getMd5WithBrowser(file);
   };
-  const toggleMoreOptions = () => {
-    setState((prevState) => ({
+  toggleMoreOptions = () => {
+    this.setState((prevState) => ({
       isMoreOptionsVisible: !prevState.isMoreOptionsVisible,
     }));
   };
 
   // Add method to handle cloud import
-  const handleCloudImport = async (e: React.MouseEvent) => {
+  handleCloudImport = async (e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent triggering the Dropzone
-    setState({ isMoreOptionsVisible: false });
+    this.setState({ isMoreOptionsVisible: false });
 
-    handleImportDialog(true);
+    this.props.handleImportDialog(true);
   };
 
   // Handle OPDS import
-  const handleOPDSImport = (e: React.MouseEvent) => {
+  handleOPDSImport = (e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent triggering the Dropzone
-    setState({ isMoreOptionsVisible: false });
-    handleOPDSDialog(true);
+    this.setState({ isMoreOptionsVisible: false });
+    this.props.handleOPDSDialog(true);
   };
 
   // Handle auto import folder
-  const handleAutoImport = (e: React.MouseEvent) => {
+  handleAutoImport = (e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent triggering the Dropzone
-    setState({ isMoreOptionsVisible: false });
-    handleAutoImportDialog(true);
+    this.setState({ isMoreOptionsVisible: false });
+    this.props.handleAutoImportDialog(true);
   };
 
   // Handle URL import
-  const handleURLImport = async (e?: React.MouseEvent, externalUrl?: string) => {
+  handleURLImport = async (e?: React.MouseEvent, externalUrl?: string) => {
     e?.stopPropagation();
-    setState({ isMoreOptionsVisible: false });
+    this.setState({ isMoreOptionsVisible: false });
     const url =
       typeof externalUrl === "string"
         ? externalUrl
         : await vexPromptAsync(
-            t("Enter book download URL or article URL"),
+            this.props.t("Enter book download URL or article URL"),
             "https://"
           );
     if (!url || typeof url !== "string") return;
@@ -1122,7 +689,7 @@ const ImportLocal = (props: ImportLocalProps) => {
       !trimmedUrl.startsWith("http://") &&
       !trimmedUrl.startsWith("https://")
     ) {
-      toast.error(t("Please enter a valid http or https URL"));
+      toast.error(this.props.t("Please enter a valid http or https URL"));
       return;
     }
     let fileName = decodeURIComponent(
@@ -1136,11 +703,11 @@ const ImportLocal = (props: ImportLocalProps) => {
         .includes(ext)
     ) {
       try {
-        await importHtmlFromURL(trimmedUrl, fileName, toastId);
+        await this.importHtmlFromURL(trimmedUrl, fileName, toastId);
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
-        toast.error(t("Import failed") + ": " + errorMessage, {
+        toast.error(this.props.t("Import failed") + ": " + errorMessage, {
           id: toastId,
         });
         console.error("URL import error:", error);
@@ -1148,7 +715,7 @@ const ImportLocal = (props: ImportLocalProps) => {
       return;
     }
 
-    toast.loading(t("Downloading") + ": 0%", {
+    toast.loading(this.props.t("Downloading") + ": 0%", {
       id: toastId,
       position: "bottom-center",
     });
@@ -1169,13 +736,13 @@ const ImportLocal = (props: ImportLocalProps) => {
         received += value.length;
         if (total > 0) {
           const percent = Math.round((received / total) * 100);
-          toast.loading(t("Downloading") + ": " + percent + "%", {
+          toast.loading(this.props.t("Downloading") + ": " + percent + "%", {
             id: toastId,
             position: "bottom-center",
           });
         } else {
           toast.loading(
-            t("Downloading") +
+            this.props.t("Downloading") +
               ": " +
               (received / 1024).toFixed(1) +
               " KB",
@@ -1191,36 +758,30 @@ const ImportLocal = (props: ImportLocalProps) => {
         offset += chunk.length;
       }
       const blob = new Blob([arrayBuffer.buffer]);
-      const file = new File([blob], fileName);
-      await getMd5WithBrowser(file);
+      const file: any = new File([blob], fileName);
+      await this.getMd5WithBrowser(file);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      toast.error(t("Import failed") + ": " + errorMessage, {
+      toast.error(this.props.t("Import failed") + ": " + errorMessage, {
         id: toastId,
       });
       console.error("URL import error:", error);
     }
   };
-  handleURLImportRef.current = handleURLImport;
-  const render = () => {
+  render() {
     return (
       <Dropzone
         onDrop={async (acceptedFiles) => {
-          props.handleDrag(false);
+          this.props.handleDrag(false);
           for (let item of acceptedFiles) {
-            if (isElectron && window.electronAPI.getPathForFile) {
-              // Electron 32+ removed File.path and react-dropzone only fills
-              // in a relative name, so resolve the real disk path via webUtils
-              item.path = window.electronAPI.getPathForFile(item);
-            }
-            await getMd5WithBrowser(item);
+            await this.getMd5WithBrowser(item);
           }
           if (
             ConfigService.getReaderConfig("isDisableAutoSync") !== "yes" &&
             ConfigService.getItem("defaultSyncOption")
           ) {
-            await cloudSyncFunc();
+            await this.props.cloudSyncFunc();
           }
         }}
         accept={supportedFormatsAccept}
@@ -1231,26 +792,26 @@ const ImportLocal = (props: ImportLocalProps) => {
             className="import-from-local"
             {...getRootProps()}
             style={
-              isCollapsed && document.body.clientWidth < 950
+              this.props.isCollapsed && document.body.clientWidth < 950
                 ? { width: "42px" }
                 : {}
             }
           >
-            {isCollapsed && stateRef.current.width < 950 ? null : (
+            {this.props.isCollapsed && this.state.width < 950 ? null : (
               <div
                 className="more-import-option"
                 onClick={(e) => {
                   e.stopPropagation(); // Prevent triggering the Dropzone
-                  toggleMoreOptions();
+                  this.toggleMoreOptions();
                 }}
               >
                 <span className="dropdown-triangle"></span>
-                {stateRef.current.isMoreOptionsVisible && (
+                {this.state.isMoreOptionsVisible && (
                   <div
                     className="more-options-dropdown"
-                    onMouseLeave={toggleMoreOptions}
+                    onMouseLeave={this.toggleMoreOptions}
                     style={
-                      stateRef.current.width < 950
+                      this.state.width < 950
                         ? {
                             bottom: "calc(100% + 5px)",
                             top: "unset",
@@ -1322,10 +883,10 @@ const ImportLocal = (props: ImportLocalProps) => {
                               const path = window.electronAPI.path;
                               const fileName = path.basename(filePath);
 
-                              let file = new File([], fileName);
+                              let file: any = new File([], fileName);
                               file.path = filePath;
 
-                              await getMd5WithBrowser(file);
+                              await this.getMd5WithBrowser(file);
                             } catch (error) {
                               const errorMessage =
                                 error instanceof Error
@@ -1338,7 +899,7 @@ const ImportLocal = (props: ImportLocalProps) => {
                               );
                             }
                           }
-                          setState({
+                          this.setState({
                             isMoreOptionsVisible: false,
                           });
                           if (
@@ -1347,7 +908,7 @@ const ImportLocal = (props: ImportLocalProps) => {
                             ) !== "yes" &&
                             ConfigService.getItem("defaultSyncOption")
                           ) {
-                            await cloudSyncFunc();
+                            await this.props.cloudSyncFunc();
                           }
                         }
                       }}
@@ -1385,16 +946,16 @@ const ImportLocal = (props: ImportLocalProps) => {
                               ) {
                                 continue;
                               }
-                              await getMd5WithBrowser(item);
+                              await this.getMd5WithBrowser(item);
                             }
-                            toggleMoreOptions();
+                            this.toggleMoreOptions();
                             if (
                               ConfigService.getReaderConfig(
                                 "isDisableAutoSync"
                               ) !== "yes" &&
                               ConfigService.getItem("defaultSyncOption")
                             ) {
-                              await cloudSyncFunc();
+                              await this.props.cloudSyncFunc();
                             }
                           }}
                         ></input>
@@ -1402,7 +963,7 @@ const ImportLocal = (props: ImportLocalProps) => {
                     </div>
                     <div
                       className="more-option-item"
-                      onClick={handleCloudImport}
+                      onClick={this.handleCloudImport}
                     >
                       <span className="more-option-text">
                         <Trans>From cloud storage</Trans>
@@ -1410,7 +971,7 @@ const ImportLocal = (props: ImportLocalProps) => {
                     </div>
                     <div
                       className="more-option-item"
-                      onClick={handleOPDSImport}
+                      onClick={this.handleOPDSImport}
                     >
                       <span className="more-option-text">
                         <Trans>From OPDS</Trans>
@@ -1418,7 +979,7 @@ const ImportLocal = (props: ImportLocalProps) => {
                     </div>
                     <div
                       className="more-option-item"
-                      onClick={handleURLImport}
+                      onClick={this.handleURLImport}
                     >
                       <span className="more-option-text">
                         <Trans>From URL</Trans>
@@ -1427,7 +988,7 @@ const ImportLocal = (props: ImportLocalProps) => {
                     {isElectron && (
                       <div
                         className="more-option-item"
-                        onClick={handleAutoImport}
+                        onClick={this.handleAutoImport}
                       >
                         <span className="more-option-text">
                           <Trans>Auto import folder</Trans>
@@ -1439,7 +1000,7 @@ const ImportLocal = (props: ImportLocalProps) => {
               </div>
             )}
             <div className="animation-mask-local"></div>
-            {isCollapsed && stateRef.current.width < 950 ? (
+            {this.props.isCollapsed && this.state.width < 950 ? (
               <span
                 className="icon-folder"
                 style={{ fontSize: "15px", fontWeight: 500 }}
@@ -1470,10 +1031,10 @@ const ImportLocal = (props: ImportLocalProps) => {
                   for (let filePath of filePaths) {
                     try {
                       const path = window.electronAPI.path;
-                      let file = new File([], path.basename(filePath));
+                      let file: any = new File([], path.basename(filePath));
                       file.path = filePath;
 
-                      await getMd5WithBrowser(file);
+                      await this.getMd5WithBrowser(file);
                     } catch (error) {
                       const errorMessage =
                         error instanceof Error ? error.message : String(error);
@@ -1489,7 +1050,7 @@ const ImportLocal = (props: ImportLocalProps) => {
                       "yes" &&
                     ConfigService.getItem("defaultSyncOption")
                   ) {
-                    await cloudSyncFunc();
+                    await this.props.cloudSyncFunc();
                   }
                 }}
               ></div>
@@ -1498,9 +1059,7 @@ const ImportLocal = (props: ImportLocalProps) => {
         )}
       </Dropzone>
     );
-  };
+  }
+}
 
-  return render();
-};
-
-export default ImportLocal;
+export default withRouter(ImportLocal as any);

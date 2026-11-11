@@ -2,24 +2,14 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import BookModel from "../../models/Book";
 import BookUtil from "../../utils/file/bookUtil";
 import CoverUtil from "../../utils/file/coverUtil";
-import { ConfigService, CollectionUtil } from "../../assets/lib/kookit-extra-browser.min";
-import {
-  setBookDragData,
-  parseBookDragData,
-  isBookDragEvent,
-  filterNonCollectionKeys,
-  getMovedFromSuffix,
-} from "../../utils/reader/bookDrag";
-import toast from "react-hot-toast";
-import i18n from "../../i18n";
-
-const collectionUtil = new CollectionUtil(ConfigService);
+import { ConfigService } from "../../assets/lib/kookit-extra-browser.min";
+import { setBookDragData } from "../../utils/reader/bookDrag";
 
 export interface BookItemSharedProps {
   book: BookModel;
   refreshBookKey: string;
   isSelectBook: boolean;
-  isSelected?: boolean;
+  isSelected: boolean;
   selectedBooks: string[];
   allBooks?: BookModel[];
   bookIndex?: number;
@@ -27,9 +17,6 @@ export interface BookItemSharedProps {
   handleReadingBook: (book: BookModel) => void;
   handleSelectBook: (isSelectBook: boolean) => void;
   handleSelectedBooks: (selectedBooks: string[]) => void;
-  handleFetchBooks?: () => void;
-  handleCollectionDialogBooks: (books: string[]) => void;
-  handleAddCollectionDialog: (isOpen: boolean) => void;
 }
 
 export function useBookItem(props: BookItemSharedProps) {
@@ -45,9 +32,6 @@ export function useBookItem(props: BookItemSharedProps) {
     handleReadingBook,
     handleSelectBook,
     handleSelectedBooks,
-    handleFetchBooks,
-    handleCollectionDialogBooks,
-    handleAddCollectionDialog,
   } = props;
 
   const [isFavorite, setIsFavorite] = useState(
@@ -60,7 +44,6 @@ export function useBookItem(props: BookItemSharedProps) {
   const [cover, setCover] = useState("");
   const [isCoverExist, setIsCoverExist] = useState(false);
   const [isBookOffline, setIsBookOffline] = useState(true);
-  const [isDropTarget, setIsDropTarget] = useState(false);
 
   // Track previous values for comparison
   const prevBookKeyRef = useRef(book.key);
@@ -269,62 +252,6 @@ export function useBookItem(props: BookItemSharedProps) {
     [book.key, isSelectBook, selectedBooks]
   );
 
-  const handleBookDropDragOver = useCallback((e: React.DragEvent) => {
-    if (!isBookDragEvent(e)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.dataTransfer) {
-      e.dataTransfer.dropEffect = "copy";
-    }
-  }, []);
-
-  const handleBookDropDragEnter = useCallback((e: React.DragEvent) => {
-    if (!isBookDragEvent(e)) return;
-    e.preventDefault();
-    setIsDropTarget(true);
-  }, []);
-
-  const handleBookDropDragLeave = useCallback((e: React.DragEvent) => {
-    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-    setIsDropTarget(false);
-  }, []);
-
-  const handleBookBookDrop = useCallback(
-    (e: React.DragEvent) => {
-      if (!isBookDragEvent(e)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      setIsDropTarget(false);
-      if (collectionUtil.isDeletedKey(book.key)) return;
-      let bookKeys = filterNonCollectionKeys(parseBookDragData(e)).filter(
-        (key) => key !== book.key && !collectionUtil.isDeletedKey(key)
-      );
-      if (bookKeys.length === 0) return;
-      let collection = collectionUtil.getActiveCollectionByBook(book.key);
-      if (collection) {
-        let { added, movedFrom } = collectionUtil.addBooksToCollection(
-          collection.key,
-          bookKeys
-        );
-        if (added > 0 || movedFrom.length > 0) {
-          toast.success(
-            i18n.t("Added to collection") + getMovedFromSuffix(movedFrom)
-          );
-          if (handleFetchBooks) handleFetchBooks();
-        }
-      } else {
-        handleCollectionDialogBooks([book.key, ...bookKeys]);
-        handleAddCollectionDialog(true);
-      }
-    },
-    [
-      book.key,
-      handleFetchBooks,
-      handleCollectionDialogBooks,
-      handleAddCollectionDialog,
-    ]
-  );
-
   return {
     // state
     isFavorite,
@@ -340,16 +267,11 @@ export function useBookItem(props: BookItemSharedProps) {
     cover,
     isCoverExist,
     isBookOffline,
-    isDropTarget,
     // handlers
     handleShiftSelect,
     handleJump,
     handleSelectIconClick,
     handleBookDragStart,
-    handleBookDropDragOver,
-    handleBookDropDragEnter,
-    handleBookDropDragLeave,
-    handleBookBookDrop,
     getPercentage,
     isFavoriteBook,
     isTopBook,

@@ -568,9 +568,6 @@ class BookUtil {
   }
   static async isBookOffline(key: string) {
     let book: Book = await DatabaseService.getRecord(key, "books");
-    if (!book) {
-      return true;
-    }
     return await this.isBookExist(
       key,
       book.format.toLowerCase(),
@@ -773,8 +770,8 @@ class BookUtil {
     if (isElectron) {
       const ipcRenderer = window.electronAPI;
       return await ipcRenderer.invoke("custom-database-command", {
-        query: `SELECT * FROM books WHERE name LIKE ? OR author LIKE ? OR key LIKE ?`,
-        data: [`%${keyword}%`, `%${keyword}%`, `%${keyword}%`],
+        query: `SELECT * FROM books WHERE name LIKE ? OR author LIKE ?`,
+        data: [`%${keyword}%`, `%${keyword}%`],
         dbName: "books",
         storagePath: getStorageLocation(),
         executeType: "all",
@@ -785,9 +782,8 @@ class BookUtil {
       const lowerKeyword = keyword.toLowerCase();
       for (let book of books) {
         if (
-          book.name?.toLowerCase().includes(lowerKeyword) ||
-          book.author?.toLowerCase().includes(lowerKeyword) ||
-          book.key?.toLowerCase().includes(lowerKeyword)
+          book.name.toLowerCase().includes(lowerKeyword) ||
+          book.author.toLowerCase().includes(lowerKeyword)
         ) {
           results.push(book);
         }

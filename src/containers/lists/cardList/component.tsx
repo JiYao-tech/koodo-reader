@@ -1,48 +1,58 @@
-import { useLatest } from "../../../utils/hooks/useLatest";
-import { useTranslation } from "react-i18next";
-import { useEffect, useRef, useState } from "react";
+import React from "react";
 import "./cardList.css";
 import NoteModel from "../../../models/Note";
 import { Trans } from "react-i18next";
-import { Navigate } from "react-router-dom";
+import { CardListProps, CardListStates } from "./interface";
+import { withRouter } from "react-router-dom";
+import { Redirect } from "react-router-dom";
 import BookUtil from "../../../utils/file/bookUtil";
 import toast from "react-hot-toast";
 import BookModel from "../../../models/Book";
 import { ConfigService } from "../../../assets/lib/kookit-extra-browser.min";
 import DatabaseService from "../../../utils/storage/databaseService";
 import Note from "../../../models/Note";
-import { useAppStore } from "../../../store/useAppStore";
+class CardList extends React.Component<CardListProps, CardListStates> {
+  private containerRef: React.RefObject<HTMLDivElement>;
+  private scrollTimer: NodeJS.Timeout | null = null;
+  constructor(props: CardListProps) {
+    super(props);
+    this.containerRef = React.createRef();
+    this.state = {
+      displayedCards: [],
+      currentPage: 1,
+      itemsPerPage: 16, // 每页显示16个卡片，适合屏幕显示
+      isLoading: false,
+    };
+  }
 
-export interface CardListProps {
-  cards: NoteModel[];
-  mode: string;
-  bookNamesMap: { [key: string]: string };
-}
+  componentDidMount() {
+    this.loadInitialCards();
+    this.addScrollListener();
+  }
 
-const CardList = (props: CardListProps) => {
-  const isCollapsed = useAppStore((s) => s.sidebar.isCollapsed);
-  const chapters = useAppStore((s) => s.reader.chapters);
-  const books = useAppStore((s) => s.manager.books);
-  const noteSortCode = useAppStore((s) => s.manager.noteSortCode);
-  const handleReadingBook = useAppStore((s) => s.handleReadingBook);
-  const handleShowPopupNote = useAppStore((s) => s.handleShowPopupNote);
-  const handleNoteKey = useAppStore((s) => s.handleNoteKey);
-  const { t } = useTranslation();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const scrollTimerRef = useRef<any>(null);
-  const [state, setState] = useState<Record<string, any>>({
-    displayedCards: [],
-    currentPage: 1,
-    itemsPerPage: 16,
-    isLoading: false,
-  });
-  const stateRef = useLatest(state);
-  const propsRef = useLatest(props);
+  componentDidUpdate(prevProps: CardListProps) {
+    // 当cards prop发生变化时，重新初始化
+    if (
+      prevProps.cards !== this.props.cards ||
+      prevProps.noteSortCode !== this.props.noteSortCode
+    ) {
+      this.loadInitialCards();
+    }
+  }
 
-  const loadInitialCards = async () => {
-    let sortedCards = [...props.cards];
-    const { itemsPerPage } = stateRef.current;
+  componentWillUnmount() {
+    this.removeScrollListener();
+    // 清理定时器
+    if (this.scrollTimer) {
+      clearTimeout(this.scrollTimer);
+    }
+  }
 
+  loadInitialCards = async () => {
+    let sortedCards = [...this.props.cards];
+    const { itemsPerPage } = this.state;
+
+    // 根据屏幕大小动态调整每页显示的卡片数量
     const screenHeight = window.innerHeight;
     const adaptiveItemsPerPage =
       screenHeight > 800 ? itemsPerPage + 8 : itemsPerPage;
@@ -55,7 +65,7 @@ const CardList = (props: CardListProps) => {
       }
     }
 
-    setState({
+    this.setState({
       displayedCards: initialDisplayedCards,
       currentPage: 1,
       isLoading: false,
@@ -63,17 +73,17 @@ const CardList = (props: CardListProps) => {
     });
   };
 
-  const loadMoreCards = () => {
-    let sortedCards = [...propsRef.current.cards];
-    const { displayedCards, currentPage, itemsPerPage, isLoading } =
-      stateRef.current;
+  loadMoreCards = () => {
+    let sortedCards = [...this.props.cards];
+    const { displayedCards, currentPage, itemsPerPage, isLoading } = this.state;
 
     if (isLoading || displayedCards.length >= sortedCards.length) {
       return;
     }
 
-    setState((prev) => ({ ...prev, isLoading: true }));
+    this.setState({ isLoading: true });
 
+    // 模拟异步加载延迟
     setTimeout(async () => {
       const nextPage = currentPage + 1;
       const startIndex = currentPage * itemsPerPage;
@@ -87,68 +97,59 @@ const CardList = (props: CardListProps) => {
         }
       }
 
-      setState((prev) => ({
-        ...prev,
-        displayedCards: [...prev.displayedCards, ...newDisplayedCards],
+      this.setState({
+        displayedCards: [...displayedCards, ...newDisplayedCards],
         currentPage: nextPage,
         isLoading: false,
-      }));
+      });
     }, 200);
   };
 
-  const handleScroll = () => {
-    if (scrollTimerRef.current) {
-      clearTimeout(scrollTimerRef.current);
+  handleScroll = () => {
+    // 清除之前的定时器
+    if (this.scrollTimer) {
+      clearTimeout(this.scrollTimer);
     }
 
-    scrollTimerRef.current = setTimeout(() => {
-      const container = containerRef.current;
+    // 设置防抖定时器
+    this.scrollTimer = setTimeout(() => {
+      const container = this.containerRef.current;
       if (!container) return;
 
       const { scrollTop, scrollHeight, clientHeight } = container;
 
+      // 当滚动到距离底部100px时开始加载更多
       if (scrollHeight - scrollTop - clientHeight < 100) {
-        loadMoreCards();
+        this.loadMoreCards();
       }
-    }, 100);
+    }, 100); // 100ms防抖延迟
   };
 
-  useEffect(() => {
-    loadInitialCards();
-    const container = containerRef.current;
+  addScrollListener = () => {
+    const container = this.containerRef.current;
     if (container) {
-      container.addEventListener("scroll", handleScroll);
+      container.addEventListener("scroll", this.handleScroll);
     }
-    return () => {
-      if (container) {
-        container.removeEventListener("scroll", handleScroll);
-      }
-      if (scrollTimerRef.current) {
-        clearTimeout(scrollTimerRef.current);
-      }
-    };
-  }, []);
+  };
 
-  const isFirstRef = useRef(true);
-  useEffect(() => {
-    if (isFirstRef.current) {
-      isFirstRef.current = false;
-      return;
+  removeScrollListener = () => {
+    const container = this.containerRef.current;
+    if (container) {
+      container.removeEventListener("scroll", this.handleScroll);
     }
-    loadInitialCards();
-  }, [props.cards, noteSortCode]);
+  };
 
-  const formatTimestamp = (timestamp: string) => {
+  formatTimestamp = (timestamp: string) => {
     try {
       const date = new Date(parseInt(timestamp));
       return date.toLocaleString();
     } catch (error) {
-      return timestamp;
+      return timestamp; // 如果转换失败，返回原始值
     }
   };
-
-  const handleJump = async (note: NoteModel) => {
+  handleJump = async (note: NoteModel) => {
     note = await DatabaseService.getRecord(note.key, "notes");
+    let { books } = this.props;
     let book: BookModel | null = null;
     for (let i = 0; i < books.length; i++) {
       if (books[i].key === note.bookKey) {
@@ -157,11 +158,12 @@ const CardList = (props: CardListProps) => {
       }
     }
     if (!book) {
-      toast(t("Book not exists"));
+      toast(this.props.t("Book not exists"));
       return;
     }
 
     let bookLocation: any = {};
+    //compatile wiht lower version(1.4.2)
     try {
       bookLocation = JSON.parse(note.cfi) || {};
     } catch (error) {
@@ -176,132 +178,132 @@ const CardList = (props: CardListProps) => {
 
     BookUtil.redirectBook(book);
   };
+  render() {
+    let { cards } = this.props;
+    const { displayedCards, isLoading } = this.state;
 
-  let { cards } = props;
-  const { displayedCards, isLoading } = state;
+    if (cards.length === 0) {
+      return <Redirect to="/manager/empty" />;
+    }
 
-  if (cards.length === 0) {
-    return <Navigate to="/manager/empty" replace />;
-  }
-
-  const renderCardListItem = (notes: any[]) => {
-    return notes.map((item: NoteModel, index: number) => {
-      return (
-        <li
-          className="card-list-item"
-          key={index}
-          style={
-            props.mode === "note" && !isCollapsed
-              ? { height: "250px" }
-              : props.mode === "note" && isCollapsed
-                ? { height: "250px", width: "calc(50vw - 70px)" }
-                : isCollapsed
-                  ? { width: "calc(50vw - 70px)" }
-                  : {}
-          }
-        >
-          <div className="card-list-item-card">
-            <div
-              className="card-list-item-title"
-              style={{ padding: 15, opacity: 0.6 }}
-            >
-              {formatTimestamp(item.key)}
-            </div>
-            <div className="card-list-item-text-parent">
-              <div className="card-list-item-note">
-                {props.mode === "note" ? item.notes : item.text}
-              </div>
-            </div>
-            {props.mode === "note" ? (
-              <div className="card-list-item-text-note">
-                <div className="card-list-item-text">{item.text}</div>
-              </div>
-            ) : null}
-
-            <div className="card-list-item-citation">
-              <div className="card-list-item-title">
-                <Trans>From</Trans>《
-              </div>
-              <div className="card-list-item-chapter card-list-item-title">
-                {props.bookNamesMap[item.bookKey]}
-              </div>
-              <div className="card-list-item-chapter card-list-item-title">
-                》{item.chapter}
-              </div>
-            </div>
-            <div className="card-list-item-show-more-container">
-              <span
-                data-tooltip-id="my-tooltip"
-                data-tooltip-content={t("Edit")}
+    const renderCardListItem = (notes) => {
+      return notes.map((item: NoteModel, index: number) => {
+        return (
+          <li
+            className="card-list-item"
+            key={index}
+            style={
+              this.props.mode === "note" && !this.props.isCollapsed
+                ? { height: "250px" }
+                : this.props.mode === "note" && this.props.isCollapsed
+                  ? { height: "250px", width: "calc(50vw - 70px)" }
+                  : this.props.isCollapsed
+                    ? { width: "calc(50vw - 70px)" }
+                    : {}
+            }
+          >
+            <div className="card-list-item-card">
+              <div
+                className="card-list-item-title"
+                style={{ padding: 15, opacity: 0.6 }}
               >
-                <span
-                  className="icon-edit-line"
-                  style={{
-                    fontSize: "22px",
-                    marginRight: "15px",
-                    marginLeft: "15px",
-                  }}
-                  onClick={() => {
-                    handleNoteKey(item.key);
-                    handleShowPopupNote(true);
-                  }}
-                ></span>
-              </span>
+                {this.formatTimestamp(item.key)}
+              </div>
+              <div className="card-list-item-text-parent">
+                <div className="card-list-item-note">
+                  {this.props.mode === "note" ? item.notes : item.text}
+                </div>
+              </div>
+              {this.props.mode === "note" ? (
+                <div className="card-list-item-text-note">
+                  <div className="card-list-item-text">{item.text}</div>
+                </div>
+              ) : null}
 
-              <span
-                data-tooltip-id="my-tooltip"
-                data-tooltip-content={t("Show in the book")}
-              >
+              <div className="card-list-item-citation">
+                <div className="card-list-item-title">
+                  <Trans>From</Trans>《
+                </div>
+                <div className="card-list-item-chapter card-list-item-title">
+                  {this.props.bookNamesMap[item.bookKey]}
+                </div>
+                <div className="card-list-item-chapter card-list-item-title">
+                  》{item.chapter}
+                </div>
+              </div>
+              <div className="card-list-item-show-more-container">
                 <span
-                  className="icon-idea-line"
-                  style={{
-                    fontSize: "22px",
+                  data-tooltip-id="my-tooltip"
+                  data-tooltip-content={this.props.t("Edit")}
+                >
+                  <span
+                    className="icon-edit-line"
+                    style={{
+                      fontSize: "22px",
+                      marginRight: "15px",
+                      marginLeft: "15px",
+                    }}
+                    onClick={() => {
+                      this.props.handleNoteKey(item.key);
+                      this.props.handleShowPopupNote(true);
+                    }}
+                  ></span>
+                </span>
 
-                    fontWeight: 400,
-                  }}
-                  onClick={() => {
-                    handleJump(item);
-                  }}
-                ></span>
-              </span>
-
-              <span
-                data-tooltip-id="my-tooltip"
-                data-tooltip-content={t("Copy note link")}
-              >
                 <span
-                  className="icon-copy-line"
-                  style={{
-                    fontSize: "18px",
-                    marginLeft: "15px",
-                    position: "relative",
-                    top: "2px",
-                  }}
-                  onClick={() => {
-                    const link = `koodo-reader://open-note?noteKey=${item.key}`;
-                    navigator.clipboard.writeText(link).then(() => {
-                      toast(t("Copied"));
-                    });
-                  }}
-                ></span>
-              </span>
+                  data-tooltip-id="my-tooltip"
+                  data-tooltip-content={this.props.t("Show in the book")}
+                >
+                  <span
+                    className="icon-idea-line"
+                    style={{
+                      fontSize: "22px",
+
+                      fontWeight: 400,
+                    }}
+                    onClick={() => {
+                      this.handleJump(item);
+                    }}
+                  ></span>
+                </span>
+
+                <span
+                  data-tooltip-id="my-tooltip"
+                  data-tooltip-content={this.props.t("Copy note link")}
+                >
+                  <span
+                    className="icon-copy-line"
+                    style={{
+                      fontSize: "18px",
+                      marginLeft: "15px",
+                      position: "relative",
+                      top: "2px",
+                    }}
+                    onClick={() => {
+                      const link = `koodo-reader://open-note?noteKey=${item.key}`;
+                      navigator.clipboard.writeText(link).then(() => {
+                        toast(this.props.t("Copied"));
+                      });
+                    }}
+                  ></span>
+                </span>
+              </div>
             </div>
+          </li>
+        );
+      });
+    };
+    return (
+      <div className="card-list-container" ref={this.containerRef}>
+        {renderCardListItem(displayedCards)}
+        {isLoading && (
+          <div className="card-list-loading">
+            <div className="loading-spinner">{this.props.t("Loading")}...</div>
           </div>
-        </li>
-      );
-    });
-  };
+        )}
+      </div>
+    );
+  }
+}
 
-  return (
-    <div className="card-list-container" ref={containerRef}>
-      {renderCardListItem(displayedCards)}
-      {isLoading && (
-        <div className="card-list-loading">
-          <div className="loading-spinner">{t("Loading")}...</div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-export default CardList;
+export default withRouter(CardList as any);

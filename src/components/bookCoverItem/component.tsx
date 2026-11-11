@@ -1,8 +1,11 @@
 import React from "react";
 import "./bookCoverItem.css";
+import { BookCoverProps } from "./interface";
 import ActionDialog from "../dialogs/actionDialog";
+import { withRouter } from "react-router-dom";
 import EmptyCover from "../emptyCover";
 import { Trans } from "react-i18next";
+import toast from "react-hot-toast";
 import { ConfigService } from "../../assets/lib/kookit-extra-browser.min";
 import { useBookItem } from "../bookItem/useBookItem";
 import { getFileNameWithoutExtension } from "../../utils/common";
@@ -11,38 +14,10 @@ import {
   estimateMenuHeight,
   CONTEXT_MENU_WIDTH,
 } from "../../utils/common";
-import { useAppStore } from "../../store/useAppStore";
-
-import BookModel from "../../models/Book";
-
-export interface BookCoverProps {
-  book: BookModel;
-  isSelected?: boolean;
-  allBooks?: BookModel[];
-  bookIndex?: number;
-}
 
 declare var window: any;
 
 const BookCoverItem: React.FC<BookCoverProps> = (props) => {
-  const isOpenActionDialog = useAppStore((s) => s.book.isOpenActionDialog);
-  const isCollapsed = useAppStore((s) => s.sidebar.isCollapsed);
-  const currentBook = useAppStore((s) => s.book.currentBook);
-  const isSelectBook = useAppStore((s) => s.manager.isSelectBook);
-  const selectedBooks = useAppStore((s) => s.manager.selectedBooks);
-  const refreshBookKey = useAppStore((s) => s.manager.refreshBookKey);
-  const handleReadingBook = useAppStore((s) => s.handleReadingBook);
-  const handleActionDialog = useAppStore((s) => s.handleActionDialog);
-  const handleRefreshBookCover = useAppStore((s) => s.handleRefreshBookCover);
-  const handleSelectBook = useAppStore((s) => s.handleSelectBook);
-  const handleSelectedBooks = useAppStore((s) => s.handleSelectedBooks);
-  const handleFetchBooks = useAppStore((s) => s.handleFetchBooks);
-  const handleCollectionDialogBooks = useAppStore(
-    (s) => s.handleCollectionDialogBooks
-  );
-  const handleAddCollectionDialog = useAppStore(
-    (s) => s.handleAddCollectionDialog
-  );
   const {
     left,
     setLeft,
@@ -55,36 +30,20 @@ const BookCoverItem: React.FC<BookCoverProps> = (props) => {
     cover,
     isCoverExist,
     isBookOffline,
-    isDropTarget,
     handleJump,
     handleSelectIconClick,
     handleBookDragStart,
-    handleBookDropDragOver,
-    handleBookDropDragEnter,
-    handleBookDropDragLeave,
-    handleBookBookDrop,
     getPercentage,
     isFavoriteBook,
     isTopBook,
-  } = useBookItem({
-    ...props,
-    refreshBookKey,
-    isSelectBook,
-    selectedBooks,
-    handleRefreshBookCover,
-    handleReadingBook,
-    handleSelectBook,
-    handleSelectedBooks,
-    handleFetchBooks,
-    handleCollectionDialogBooks,
-    handleAddCollectionDialog,
-  });
+    setIsFavorite,
+  } = useBookItem(props);
 
   const handleMoreAction = (event: any) => {
     event.preventDefault();
     const e = event || window.event;
     let x = e.clientX;
-    if (x > document.body.clientWidth - 300 && !isCollapsed) {
+    if (x > document.body.clientWidth - 300 && !props.isCollapsed) {
       x = x - 180;
     }
     const pos = clampMenuPosition(
@@ -93,45 +52,32 @@ const BookCoverItem: React.FC<BookCoverProps> = (props) => {
         ? e.clientY
         : e.clientY - 200,
       CONTEXT_MENU_WIDTH,
-      estimateMenuHeight(10)
+      estimateMenuHeight(9)
     );
     setLeft(pos.left);
     setTop(pos.top);
-    handleActionDialog(true);
-    handleReadingBook(props.book);
+    props.handleActionDialog(true);
+    props.handleReadingBook(props.book);
   };
 
   const percentage = getPercentage();
 
-  // Do NOT assign book-supplied HTML to innerHTML, even on a detached element,
-  // as that parses and fires inline event handlers (see CVE class in epubs).
-  // Use DOMParser instead, which never executes scripts or event handlers.
-  const textContent = props.book.description
-    ? (new DOMParser()
-        .parseFromString(props.book.description, "text/html")
-        .documentElement.textContent?.trim() ?? "")
-    : "";
+  var htmlString = props.book.description;
+  var div = document.createElement("div");
+  div.innerHTML = htmlString;
+  var textContent = div.textContent || div.innerText;
 
   const actionProps = { left, top };
-  const dropHandlers = {
-    onDragOver: handleBookDropDragOver,
-    onDragEnter: handleBookDropDragEnter,
-    onDragLeave: handleBookDropDragLeave,
-    onDrop: handleBookBookDrop,
-  };
 
   return (
     <>
       <div
-        className={
-          "book-list-cover-item" + (isDropTarget ? " book-drop-target" : "")
-        }
+        className="book-list-cover-item"
         draggable
         onDragStart={handleBookDragStart}
         onContextMenu={(event) => {
           handleMoreAction(event);
         }}
-        {...dropHandlers}
       >
         <div className="book-cover-item-header">
           <div className="reading-progress-icon">
@@ -238,7 +184,7 @@ const BookCoverItem: React.FC<BookCoverProps> = (props) => {
               }}
             />
           )}
-          {isSelectBook || isHover ? (
+          {props.isSelectBook || isHover ? (
             <span
               className="icon-message book-selected-icon"
               onMouseEnter={() => {
@@ -290,11 +236,11 @@ const BookCoverItem: React.FC<BookCoverProps> = (props) => {
           </div>
         </div>
       </div>
-      {isOpenActionDialog && props.book.key === currentBook.key ? (
+      {props.isOpenActionDialog && props.book.key === props.currentBook.key ? (
         <ActionDialog {...(actionProps as any)} />
       ) : null}
     </>
   );
 };
 
-export default BookCoverItem;
+export default withRouter(BookCoverItem as any);

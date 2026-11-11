@@ -1,10 +1,9 @@
-import { useLatest } from "../../../utils/hooks/useLatest";
-import { useTranslation } from "react-i18next";
-import { useRef, useState } from "react";
+import React from "react";
 import "./importDialog.css";
 import { driveList } from "../../../constants/driveList";
 import { Trans } from "react-i18next";
-import { useAppStore } from "../../../store/useAppStore";
+import { ImportDialogProps, ImportDialogState } from "./interface";
+import _ from "underscore";
 import toast from "react-hot-toast";
 import { isElectron } from "react-device-detect";
 import { getCloudConfig } from "../../../utils/file/common";
@@ -22,27 +21,6 @@ import {
   SyncUtil,
 } from "../../../assets/lib/kookit-extra-browser.min";
 import { GooglePickerUtil } from "../../../utils/file/googlePicker";
-
-export interface ImportDialogState {
-  currentDrive: string;
-  currentPath: string;
-  currentFileList: {
-    name: string;
-    size: number;
-    type: string;
-    modified: string;
-    path: string;
-  }[];
-  selectedFileList: {
-    name: string;
-    size: number;
-    type: string;
-    modified: string;
-    path: string;
-  }[];
-  isWaitList: boolean;
-}
-
 declare var window: any;
 type FileInfo = {
   name: string;
@@ -51,64 +29,64 @@ type FileInfo = {
   modified: string;
   path: string;
 };
-
-const ImportDialog = () => {
-  const isAuthed = useAppStore((s) => s.manager.isAuthed);
-  const dataSourceList = useAppStore((s) => s.backupPage.dataSourceList);
-  const importBookFunc = useAppStore((s) => s.book.importBookFunc);
-  const handleImportDialog = useAppStore((s) => s.handleImportDialog);
-  const handleSetting = useAppStore((s) => s.handleSetting);
-  const handleSettingMode = useAppStore((s) => s.handleSettingMode);
-  const handleSettingDrive = useAppStore((s) => s.handleSettingDrive);
-  const { t } = useTranslation();
-  const [state, setState] = useState<ImportDialogState>(() => ({
-    currentDrive: "",
-    currentPath: "",
-    currentFileList: [],
-    selectedFileList: [],
-    isWaitList: false,
-  }));
-  const googlePickerUtil = useRef<any>(null);
-  const stateRef = useLatest(state);
-
-  const handleClose = () => {
-    handleImportDialog(false);
+class ImportDialog extends React.Component<
+  ImportDialogProps,
+  ImportDialogState
+> {
+  googlePickerUtil: any;
+  constructor(props: ImportDialogProps) {
+    super(props);
+    this.state = {
+      isBackup: "",
+      currentDrive: "",
+      currentPath: "",
+      currentFileList: [],
+      selectedFileList: [],
+      isWaitList: false,
+    };
+  }
+  handleClose = () => {
+    this.props.handleImportDialog(false);
   };
 
-  const showMessage = (message: string) => {
-    toast(t(message));
+  showMessage = (message: string) => {
+    toast(this.props.t(message));
   };
-  const handleSelectSource = (event: any) => {
-    if (!dataSourceList.includes(event.target.value)) {
+  handleSelectSource = (event: any) => {
+    if (!this.props.dataSourceList.includes(event.target.value)) {
       toast(
-        t("Please add data source in the setting-Sync and backup first")
+        this.props.t(
+          "Please add data source in the setting-Sync and backup first"
+        )
       );
-      handleSetting(true);
-      handleSettingMode("sync");
+      this.props.handleSetting(true);
+      this.props.handleSettingMode("sync");
       return;
     }
     if (
       driveList.find((item) => item.value === event.target.value)?.isPro &&
-      !isAuthed
+      !this.props.isAuthed
     ) {
-      toast(t("Please upgrade to Pro to use this feature"));
-      handleSetting(true);
-      handleSettingMode("account");
+      toast(this.props.t("Please upgrade to Pro to use this feature"));
+      this.props.handleSetting(true);
+      this.props.handleSettingMode("account");
       return;
     }
     if (event.target.value === "add") {
       toast(
-        t("Please add data source in the setting-Sync and backup first")
+        this.props.t(
+          "Please add data source in the setting-Sync and backup first"
+        )
       );
-      handleSetting(true);
-      handleSettingMode("sync");
+      this.props.handleSetting(true);
+      this.props.handleSettingMode("sync");
 
       return;
     }
-    setState((prev) => ({ ...prev, currentDrive: event.target.value }));
+    this.setState({ currentDrive: event.target.value });
   };
-  const listFolder = async (drive: string, path: string) => {
-    setState((prev) => ({ ...prev, isWaitList: true }));
+  listFolder = async (drive: string, path: string) => {
+    this.setState({ isWaitList: true });
     let fileInfoList = [];
     if (isElectron) {
       const ipcRenderer = window.electronAPI;
@@ -124,37 +102,40 @@ const ImportDialog = () => {
       let pickerUtil = await SyncService.getPickerUtil(drive);
       fileInfoList = await pickerUtil.listFileInfos(path);
     }
-    setState((prev) => ({
-      ...prev,
+    this.setState({
       currentFileList: fileInfoList,
       isWaitList: false,
-    }));
+    });
   };
-  const handleClickItem = async (item: FileInfo) => {
+  handleClickItem = async (item: FileInfo) => {
     if (item.type === "folder") {
-      const nextPath = stateRef.current.currentPath + "/" + item.name;
-      setState((prev) => ({
-        ...prev,
-        currentPath: nextPath,
-      }));
-      listFolder(stateRef.current.currentDrive, nextPath);
+      this.setState(
+        {
+          currentPath: this.state.currentPath + "/" + item.name,
+        },
+        async () => {
+          this.listFolder(this.state.currentDrive, this.state.currentPath);
+        }
+      );
     } else {
-      let sourcePath = stateRef.current.currentPath + "/" + item.name;
+      let sourcePath = this.state.currentPath + "/" + item.name;
       item.path = sourcePath; // Add path to item for reference
-      handleImportBook(item);
+      this.handleImportBook(item);
     }
   };
-  const handleImportBook = async (item: FileInfo) => {
+  handleImportBook = async (item: FileInfo) => {
     let isSupported = supportedFormats.includes(
       "." + item.name.split(".").pop()?.toLowerCase() || ""
     );
     if (!isSupported) {
       toast.error(
-        t("Unsupported file format") + ": " + item.name.split(".").pop()
+        this.props.t("Unsupported file format") +
+          ": " +
+          item.name.split(".").pop()
       );
       return;
     }
-    toast.loading(t("Downloading"), {
+    toast.loading(this.props.t("Downloading"), {
       id: "offline-book-import",
       position: "bottom-center",
     });
@@ -165,14 +146,14 @@ const ImportDialog = () => {
       const path = window.electronAPI.path;
       const dataPath = getStorageLocation() || "";
       const ipcRenderer = window.electronAPI;
-      let tokenConfig = await getCloudConfig(stateRef.current.currentDrive);
+      let tokenConfig = await getCloudConfig(this.state.currentDrive);
       if (!fs.existsSync(path.join(dataPath, "temp"))) {
         fs.mkdirSync(path.join(dataPath, "temp"), {
           recursive: true,
         });
       }
       let timer = showDownloadProgress(
-        stateRef.current.currentDrive,
+        this.state.currentDrive,
         "picker",
         item.size,
         "offline-book-import"
@@ -182,7 +163,7 @@ const ImportDialog = () => {
         baseFolder: "",
         sourcePath: item.path.substring(1),
         destPath: destPath,
-        service: stateRef.current.currentDrive,
+        service: this.state.currentDrive,
         storagePath: dataPath,
       });
       clearInterval(timer);
@@ -198,14 +179,12 @@ const ImportDialog = () => {
       fs.unlinkSync(path.join(dataPath, destPath));
     } else {
       let timer = showDownloadProgress(
-        stateRef.current.currentDrive,
+        this.state.currentDrive,
         "picker",
         item.size,
         "offline-book-import"
       );
-      let pickerUtil = await SyncService.getPickerUtil(
-        stateRef.current.currentDrive
-      );
+      let pickerUtil = await SyncService.getPickerUtil(this.state.currentDrive);
 
       let arraybuffer = await pickerUtil.remote.downloadFile(
         item.path.substring(1)
@@ -217,16 +196,16 @@ const ImportDialog = () => {
       file = new File([blob], fileName);
     }
     toast.dismiss("importing");
-    await importBookFunc(file);
+    await this.props.importBookFunc(file);
   };
-  const listAllFilesRecursively = async (folderName: string) => {
-    toast.loading(t("Scanning folder"), {
+  listAllFilesRecursively = async (folderName: string) => {
+    toast.loading(this.props.t("Scanning folder"), {
       id: "scanning",
     });
 
     try {
-      const allFiles = await getAllFilesInFolder(
-        stateRef.current.currentPath + "/" + folderName
+      const allFiles = await this.getAllFilesInFolder(
+        this.state.currentPath + "/" + folderName
       );
 
       // Filter only files (not folders) and get full paths
@@ -234,7 +213,7 @@ const ImportDialog = () => {
 
       if (fileInfoList.length === 0) {
         toast.dismiss("scanning");
-        toast(t("No files found in this folder"));
+        toast(this.props.t("No files found in this folder"));
         return;
       }
       let selectedFileList = fileInfoList.filter((file) =>
@@ -243,11 +222,11 @@ const ImportDialog = () => {
         )
       );
       toast.dismiss("scanning");
-      toast.success(t("Successfully scanned folder"));
+      toast.success(this.props.t("Successfully scanned folder"));
       for (let i = 0; i < selectedFileList.length; i++) {
         let fileInfo = selectedFileList[i];
 
-        await handleImportBook(fileInfo);
+        await this.handleImportBook(fileInfo);
       }
     } catch (error) {
       toast.dismiss("scanning");
@@ -260,9 +239,7 @@ const ImportDialog = () => {
     }
   };
 
-  const getAllFilesInFolder = async (
-    folderPath: string
-  ): Promise<FileInfo[]> => {
+  getAllFilesInFolder = async (folderPath: string): Promise<FileInfo[]> => {
     let allFiles: FileInfo[] = [];
 
     try {
@@ -270,17 +247,17 @@ const ImportDialog = () => {
 
       if (isElectron) {
         const ipcRenderer = window.electronAPI;
-        let tokenConfig = await getCloudConfig(stateRef.current.currentDrive);
+        let tokenConfig = await getCloudConfig(this.state.currentDrive);
         fileInfoList = await ipcRenderer.invoke("picker-list", {
           ...tokenConfig,
           baseFolder: "",
-          service: stateRef.current.currentDrive,
+          service: this.state.currentDrive,
           currentPath: folderPath,
           storagePath: getStorageLocation(),
         });
       } else {
         let pickerUtil = await SyncService.getPickerUtil(
-          stateRef.current.currentDrive
+          this.state.currentDrive
         );
         fileInfoList = await pickerUtil.listFileInfos(folderPath);
       }
@@ -291,7 +268,7 @@ const ImportDialog = () => {
 
         if (item.type === "folder") {
           // It's a folder, recursively get files from it
-          const subFiles = await getAllFilesInFolder(fullPath);
+          const subFiles = await this.getAllFilesInFolder(fullPath);
           allFiles = allFiles.concat(subFiles);
         } else {
           // It's a file, add to list
@@ -309,18 +286,18 @@ const ImportDialog = () => {
     return allFiles;
   };
   // 新增Google Picker处理方法
-  const handleGooglePicker = async () => {
+  handleGooglePicker = async () => {
     try {
       if (isElectron) {
         toast.loading(
-          t("Please select the books in the Google Drive Picker"),
+          this.props.t("Please select the books in the Google Drive Picker"),
           {
             id: "google-picker",
           }
         );
       }
       let pickerUtil: any = await SyncService.getPickerUtil("google");
-      googlePickerUtil.current = new GooglePickerUtil({
+      this.googlePickerUtil = new GooglePickerUtil({
         accessToken: pickerUtil.remote.config.access_token,
         apiKey: "",
         appId: "1051055003225",
@@ -336,48 +313,50 @@ const ImportDialog = () => {
         ipcRenderer.once("picker-finished", async (config: any) => {
           if (config && config.action === "picked" && config.docs) {
             for (const file of config.docs) {
-              await handleImportGoogleFile(file);
+              await this.handleImportGoogleFile(file);
             }
           }
         });
       } else {
-        await googlePickerUtil.current.createPicker(handlePickerCallback);
+        await this.googlePickerUtil.createPicker(this.handlePickerCallback);
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
       console.error("Error creating Google Picker:", error);
-      toast.error(t("Failed to open Google Picker"));
+      toast.error(this.props.t("Failed to open Google Picker"));
     }
   };
 
   // Google Picker回调处理
-  const handlePickerCallback = async (data: any) => {
+  handlePickerCallback = async (data: any) => {
     if (data.action === window.google.picker.Action.PICKED) {
       const files = data.docs;
       for (const file of files) {
-        await handleImportGoogleFile(file);
+        await this.handleImportGoogleFile(file);
       }
     }
   };
 
   // 处理Google文件导入
-  const handleImportGoogleFile = async (googleFile: any) => {
+  handleImportGoogleFile = async (googleFile: any) => {
     try {
       // 检查文件格式
       const fileExtension =
         "." + googleFile.name.split(".").pop()?.toLowerCase();
       if (!supportedFormats.includes(fileExtension)) {
-        toast.error(t("Unsupported file format") + ": " + fileExtension);
+        toast.error(
+          this.props.t("Unsupported file format") + ": " + fileExtension
+        );
         return;
       }
 
-      toast.loading(t("Downloading") + ": " + googleFile.name, {
+      toast.loading(this.props.t("Downloading") + ": " + googleFile.name, {
         id: "google-download-" + googleFile.id,
         position: "bottom-center",
       });
 
       // 下载文件
-      const arrayBuffer = await googlePickerUtil.current.downloadFile(
+      const arrayBuffer = await this.googlePickerUtil.downloadFile(
         googleFile.id
       );
       const blob = new Blob([arrayBuffer]);
@@ -385,7 +364,7 @@ const ImportDialog = () => {
 
       toast.dismiss("google-download-" + googleFile.id);
 
-      await importBookFunc(file);
+      await this.props.importBookFunc(file);
     } catch (error) {
       toast.error(
         "Error importing Google file: " +
@@ -395,235 +374,240 @@ const ImportDialog = () => {
         }
       );
       console.error("Error importing Google file:", error);
-      toast.error(t("Failed to import") + ": " + googleFile.name);
+      toast.error(this.props.t("Failed to import") + ": " + googleFile.name);
     }
   };
-
-  return (
-    <div
-      className="backup-page-container"
-      style={{ height: "450px", top: "calc(50% - 225px)" }}
-    >
-      <div className="backup-dialog-title">
-        <Trans>From cloud storage</Trans>
-      </div>
-      <div className="import-dialog-option">
-        {state.currentDrive === "" && (
-          <>
-            {driveList
-              .filter(
-                (item) =>
-                  !item.scoped &&
-                  item.support.includes(isElectron ? "desktop" : "browser")
-              )
-              .map((item) => (
-                <div
-                  key={item.value}
-                  className={`cloud-drive-item `}
-                  onClick={() => {
-                    if (item.isPro && !isAuthed) {
-                      toast(
-                        t("Please upgrade to Pro to use this feature")
-                      );
-                      handleSetting(true);
-                      handleSettingMode("account");
-                      return;
-                    }
-
-                    if (!dataSourceList.includes(item.value)) {
-                      handleSetting(true);
-                      handleSettingMode("sync");
-                      handleSettingDrive(item.value);
-                      let settingDrive = item.value;
-                      if (
-                        settingDrive === "dropbox" ||
-                        settingDrive === "yandex" ||
-                        settingDrive === "yiyiwu" ||
-                        settingDrive === "dubox" ||
-                        settingDrive === "google" ||
-                        settingDrive === "boxnet" ||
-                        settingDrive === "pcloud" ||
-                        settingDrive === "adrive" ||
-                        settingDrive === "microsoft_exp" ||
-                        settingDrive === "microsoft"
-                      ) {
-                        openInBrowser(
-                          new SyncUtil(settingDrive, {}).getAuthUrl(
-                            getServerRegion() === "china" &&
-                              (settingDrive === "microsoft" ||
-                                settingDrive === "microsoft_exp" ||
-                                settingDrive === "dubox" ||
-                                settingDrive === "yiyiwu" ||
-                                settingDrive === "adrive")
-                              ? KookitConfig.ThirdpartyConfig.cnCallbackUrl
-                              : KookitConfig.ThirdpartyConfig.callbackUrl
+  render() {
+    return (
+      <div
+        className="backup-page-container"
+        style={{ height: "450px", top: "calc(50% - 225px)" }}
+      >
+        <div className="backup-dialog-title">
+          <Trans>From cloud storage</Trans>
+        </div>
+        <div className="import-dialog-option">
+          {this.state.currentDrive === "" && (
+            <>
+              {driveList
+                .filter(
+                  (item) =>
+                    !item.scoped &&
+                    item.support.includes(isElectron ? "desktop" : "browser")
+                )
+                .map((item) => (
+                  <div
+                    key={item.value}
+                    className={`cloud-drive-item `}
+                    onClick={() => {
+                      if (item.isPro && !this.props.isAuthed) {
+                        toast(
+                          this.props.t(
+                            "Please upgrade to Pro to use this feature"
                           )
                         );
+                        this.props.handleSetting(true);
+                        this.props.handleSettingMode("account");
+                        return;
                       }
-                      return;
-                    }
-                    if (item.value === "google") {
-                      handleGooglePicker();
-                      return;
-                    }
-                    setState((prev) => ({
-                      ...prev,
-                      currentDrive: item.value,
-                      currentPath: "",
-                    }));
 
-                    listFolder(item.value, "");
-                  }}
-                >
-                  <span className="cloud-drive-label">
-                    {t(item.label) + (item.isPro ? " (Pro)" : "")}
-                  </span>
-                  <span className="icon-dropdown import-dialog-more-file"></span>
-                </div>
-              ))}
-          </>
-        )}
-        {state.currentDrive !== "" &&
-          state.currentFileList.length > 0 &&
-          state.currentFileList.map((item, index) => (
-            <div key={index} className={`cloud-drive-item `}>
-              <span
-                className="cloud-drive-label"
-                onClick={async () => {
-                  handleClickItem(item);
-                }}
-              >
-                {item.name}
-              </span>
-              {item.size > 0 && item.type === "file" && (
-                <span className="cloud-drive-label" style={{ maxWidth: "80px" }}>
-                  {(item.size / (1024 * 1024)).toFixed(2)} MB
-                </span>
-              )}
+                      if (!this.props.dataSourceList.includes(item.value)) {
+                        this.props.handleSetting(true);
+                        this.props.handleSettingMode("sync");
+                        this.props.handleSettingDrive(item.value);
+                        let settingDrive = item.value;
+                        if (
+                          settingDrive === "dropbox" ||
+                          settingDrive === "yandex" ||
+                          settingDrive === "yiyiwu" ||
+                          settingDrive === "dubox" ||
+                          settingDrive === "google" ||
+                          settingDrive === "boxnet" ||
+                          settingDrive === "pcloud" ||
+                          settingDrive === "adrive" ||
+                          settingDrive === "microsoft_exp" ||
+                          settingDrive === "microsoft"
+                        ) {
+                          openInBrowser(
+                            new SyncUtil(settingDrive, {}).getAuthUrl(
+                              getServerRegion() === "china" &&
+                                (settingDrive === "microsoft" ||
+                                  settingDrive === "microsoft_exp" ||
+                                  settingDrive === "dubox" ||
+                                  settingDrive === "yiyiwu" ||
+                                  settingDrive === "adrive")
+                                ? KookitConfig.ThirdpartyConfig.cnCallbackUrl
+                                : KookitConfig.ThirdpartyConfig.callbackUrl
+                            )
+                          );
+                        }
+                        return;
+                      }
+                      if (item.value === "google") {
+                        this.handleGooglePicker();
+                        return;
+                      }
+                      this.setState({
+                        currentDrive: item.value,
+                        currentPath: "",
+                      });
 
-              {item.type === "folder" && (
-                <span
-                  className="import-dialog-folder-button"
-                  onClick={() => {
-                    //list all files in the folder and its subfolder
-                    listAllFilesRecursively(item.name);
-                  }}
-                >
-                  <span
-                    data-tooltip-id="my-tooltip"
-                    data-tooltip-content={t("Import folder")}
+                      this.listFolder(item.value, "");
+                    }}
                   >
-                    <span className="icon-import import-dialog-folder-icon"></span>
-                  </span>
-                </span>
-              )}
-              {item.type === "folder" ? (
+                    <span className="cloud-drive-label">
+                      {this.props.t(item.label) + (item.isPro ? " (Pro)" : "")}
+                    </span>
+                    <span className="icon-dropdown import-dialog-more-file"></span>
+                  </div>
+                ))}
+            </>
+          )}
+          {this.state.currentDrive !== "" &&
+            this.state.currentFileList.length > 0 &&
+            this.state.currentFileList.map((item, index) => (
+              <div key={index} className={`cloud-drive-item `}>
                 <span
-                  className="icon-dropdown import-dialog-more-file"
+                  className="cloud-drive-label"
                   onClick={async () => {
-                    handleClickItem(item);
+                    this.handleClickItem(item);
                   }}
-                ></span>
-              ) : state.selectedFileList
-                  .map((item) => item.path)
-                  .includes(state.currentPath + "/" + item.name) ? (
-                <span
-                  className="icon-check import-dialog-check-file"
-                  style={{ fontWeight: "bold" }}
-                  onClick={() => {
-                    setState((prev) => ({
-                      ...prev,
-                      selectedFileList: prev.selectedFileList.filter(
-                        (file) =>
-                          file.path !== state.currentPath + "/" + item.name
-                      ),
-                    }));
-                  }}
-                ></span>
-              ) : (
-                <span
-                  className="icon-add import-dialog-more-file"
-                  onClick={() => {
-                    setState((prev) => ({
-                      ...prev,
-                      selectedFileList: [
-                        ...prev.selectedFileList,
-                        {
-                          ...item,
-                          path: state.currentPath + "/" + item.name,
-                        },
-                      ],
-                    }));
-                  }}
-                ></span>
-              )}
-            </div>
-          ))}
-        {state.currentDrive !== "" &&
-          state.currentFileList.length === 0 &&
-          state.isWaitList && (
-            <div className="loading-animation" style={{ height: "100%" }}>
-              <div className="loader"></div>
-            </div>
-          )}
-        {state.currentDrive !== "" &&
-          state.currentFileList.length === 0 &&
-          !state.isWaitList && (
-            <div className="loading-animation" style={{ height: "100%" }}>
-              {t("Empty")}
-            </div>
-          )}
-      </div>
-      <div
-        className="import-dialog-back-button"
-        style={{ left: "20px", color: "rgb(231, 69, 69)" }}
-        onClick={async () => {
-          if (state.selectedFileList.length === 0) {
-            toast.error(t("No file selected"));
-            return;
-          }
-          for (let i = 0; i < state.selectedFileList.length; i++) {
-            let fileInfo = state.selectedFileList[i];
+                >
+                  {item.name}
+                </span>
+                {item.size > 0 && item.type === "file" && (
+                  <span
+                    className="cloud-drive-label"
+                    style={{ maxWidth: "80px" }}
+                  >
+                    {(item.size / (1024 * 1024)).toFixed(2)} MB
+                  </span>
+                )}
 
-            await handleImportBook(fileInfo);
-          }
-          setState((prev) => ({
-            ...prev,
-            selectedFileList: [],
-          }));
-        }}
-      >
-        {t("Import") + " (" + state.selectedFileList.length + ")"}
-      </div>
-      <div
-        className="import-dialog-back-button"
-        onClick={async () => {
-          if (state.currentPath === "") {
-            setState((prev) => ({
-              ...prev,
-              currentDrive: "",
-              currentFileList: [],
-            }));
-            return;
-          }
-          let parentPath = state.currentPath.split("/").slice(0, -1).join("/");
-          setState((prev) => ({ ...prev, currentPath: parentPath }));
-          listFolder(state.currentDrive, parentPath);
-        }}
-      >
-        {t("Back to parent")}
-      </div>
+                {item.type === "folder" && (
+                  <span
+                    className="import-dialog-folder-button"
+                    onClick={() => {
+                      //list all files in the folder and its subfolder
+                      this.listAllFilesRecursively(item.name);
+                    }}
+                  >
+                    <span
+                      data-tooltip-id="my-tooltip"
+                      data-tooltip-content={this.props.t("Import folder")}
+                    >
+                      <span className="icon-import import-dialog-folder-icon"></span>
+                    </span>
+                  </span>
+                )}
+                {item.type === "folder" ? (
+                  <span
+                    className="icon-dropdown import-dialog-more-file"
+                    onClick={async () => {
+                      this.handleClickItem(item);
+                    }}
+                  ></span>
+                ) : this.state.selectedFileList
+                    .map((item) => item.path)
+                    .includes(this.state.currentPath + "/" + item.name) ? (
+                  <span
+                    className="icon-check import-dialog-check-file"
+                    style={{ fontWeight: "bold" }}
+                    onClick={() => {
+                      this.setState({
+                        selectedFileList: this.state.selectedFileList.filter(
+                          (file) =>
+                            file.path !==
+                            this.state.currentPath + "/" + item.name
+                        ),
+                      });
+                    }}
+                  ></span>
+                ) : (
+                  <span
+                    className="icon-add import-dialog-more-file"
+                    onClick={() => {
+                      this.setState({
+                        selectedFileList: [
+                          ...this.state.selectedFileList,
+                          {
+                            ...item,
+                            path: this.state.currentPath + "/" + item.name,
+                          },
+                        ],
+                      });
+                    }}
+                  ></span>
+                )}
+              </div>
+            ))}
+          {this.state.currentDrive !== "" &&
+            this.state.currentFileList.length === 0 &&
+            this.state.isWaitList && (
+              <div className="loading-animation" style={{ height: "100%" }}>
+                <div className="loader"></div>
+              </div>
+            )}
+          {this.state.currentDrive !== "" &&
+            this.state.currentFileList.length === 0 &&
+            !this.state.isWaitList && (
+              <div className="loading-animation" style={{ height: "100%" }}>
+                {this.props.t("Empty")}
+              </div>
+            )}
+        </div>
+        <div
+          className="import-dialog-back-button"
+          style={{ left: "20px", color: "rgb(231, 69, 69)" }}
+          onClick={async () => {
+            if (this.state.selectedFileList.length === 0) {
+              toast.error(this.props.t("No file selected"));
+              return;
+            }
+            for (let i = 0; i < this.state.selectedFileList.length; i++) {
+              let fileInfo = this.state.selectedFileList[i];
 
-      <div
-        className="backup-page-close-icon"
-        onClick={() => {
-          handleClose();
-        }}
-      >
-        <span className="icon-close backup-close-icon"></span>
+              await this.handleImportBook(fileInfo);
+            }
+            this.setState({
+              selectedFileList: [],
+            });
+          }}
+        >
+          {this.props.t("Import") +
+            " (" +
+            this.state.selectedFileList.length +
+            ")"}
+        </div>
+        <div
+          className="import-dialog-back-button"
+          onClick={async () => {
+            if (this.state.currentPath === "") {
+              this.setState({ currentDrive: "", currentFileList: [] });
+              return;
+            }
+            let parentPath = this.state.currentPath
+              .split("/")
+              .slice(0, -1)
+              .join("/");
+            this.setState({ currentPath: parentPath });
+            this.listFolder(this.state.currentDrive, parentPath);
+          }}
+        >
+          {this.props.t("Back to parent")}
+        </div>
+
+        <div
+          className="backup-page-close-icon"
+          onClick={() => {
+            this.handleClose();
+          }}
+        >
+          <span className="icon-close backup-close-icon"></span>
+        </div>
       </div>
-    </div>
-  );
-};
+    );
+  }
+}
 
 export default ImportDialog;

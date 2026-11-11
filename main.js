@@ -10,6 +10,7 @@ const {
   powerSaveBlocker,
   nativeTheme: electronNativeTheme,
   screen,
+  systemPreferences,
   shell,
   clipboard,
   net,
@@ -21,118 +22,16 @@ const isDev = require("electron-is-dev");
 const Store = require("electron-store");
 const log = require("electron-log/main");
 const os = require("os");
+const { execFile } = require("child_process");
 const store = new Store();
 const fs = require("fs");
 const fsExtra = require("fs-extra");
 const nodeCrypto = require("crypto");
+const yazl = require("yazl");
 const yauzl = require("yauzl");
-const tarStream = require("tar-stream");
-const {
-  normalizeArchiveEntryName,
-  ensureEntryInside,
-  ensureTarIndex,
-  extractTarByOffsets,
-} = require("./src/utils/main/tar-index");
-const { runPowerShellScript } = require("./src/utils/main/powershell-util");
-const {
-  buildProxyUrl,
-  checkCloudUrl,
-  testProxyConnection,
-} = require("./src/utils/main/network-util");
-const {
-  backupToPath,
-  restoreFromPath,
-} = require("./src/utils/main/backup-util");
-const {
-  setDiscordActivity,
-  clearDiscordActivity,
-  destroyDiscordRPC,
-} = require("./src/utils/main/discord-rpc-util");
-const {
-  resolveOcrLang,
-  parseOcrImageInput,
-  writeOcrTempImage,
-  runWindowsOcr,
-  runMacosOcr,
-} = require("./src/utils/main/ocr-util");
-const {
-  getBiometricCapability,
-  promptBiometricAuth,
-} = require("./src/utils/main/biometric-util");
 const { getVoicePlugin } = require("./src/utils/plugins/main/registry");
-const ttsCacheUtil = require("./src/utils/plugins/main/voice/ttsCache");
 const configDir = app.getPath("userData");
 const dirPath = path.join(configDir, "uploads");
-// 数据目录（即渲染进程的 getStorageLocation，见 "storage-location"）
-const dataPath = path.join(dirPath, "data");
-// 递归计算目录大小（字节），不存在或出错时返回 0
-const getDirSize = (targetPath) => {
-  if (!fs.existsSync(targetPath)) {
-    return 0;
-  }
-  try {
-    const stat = fs.statSync(targetPath);
-    if (stat.isFile()) {
-      return stat.size;
-    }
-    const entries = fs.readdirSync(targetPath, { withFileTypes: true });
-    return entries.reduce((total, entry) => {
-      const entryPath = path.join(targetPath, entry.name);
-      if (entry.isDirectory()) {
-        return total + getDirSize(entryPath);
-      }
-      return total + (fs.statSync(entryPath).size || 0);
-    }, 0);
-  } catch (error) {
-    console.error("Error calculating directory size:", error);
-    return 0;
-  }
-};
-// 听书缓存目录
-const getTTSCacheDirPath = () => path.join(dirPath, "tts");
-// 临时缓存目录：漫画解包、OCR 结果、整页翻译缓存与书籍导入临时文件
-const getTempCacheDirPaths = () => [
-  path.join(dirPath, "comic"),
-  path.join(dirPath, "ocr"),
-  path.join(dirPath, "trans"),
-  path.join(dataPath, "temp"),
-];
-const customVoicePluginCache = new Map();
-const resolveCustomVoicePlugin = ({ script, scriptSHA256, pluginKey } = {}) => {
-  if (
-    typeof script !== "string" ||
-    !script ||
-    typeof scriptSHA256 !== "string" ||
-    !scriptSHA256
-  ) {
-    return undefined;
-  }
-  const cached = customVoicePluginCache.get(scriptSHA256);
-  if (cached && cached.script === script && cached.pluginKey === pluginKey) {
-    return cached;
-  }
-  const hash = nodeCrypto.createHash("sha256").update(script).digest("hex");
-  if (hash !== scriptSHA256.toLowerCase()) {
-    throw new Error("Custom voice plugin verification failed");
-  }
-  delete global.getAudioPath;
-  delete global.getTTSVoice;
-  // eslint-disable-next-line no-eval
-  eval(script);
-  if (typeof global.getAudioPath !== "function") {
-    throw new Error("Invalid custom voice plugin script");
-  }
-  const resolved = {
-    script,
-    scriptSHA256: hash,
-    pluginKey,
-    getAudioPath: global.getAudioPath,
-    getTTSVoice:
-      typeof global.getTTSVoice === "function" ? global.getTTSVoice : undefined,
-  };
-  customVoicePluginCache.set(scriptSHA256, resolved);
-  return resolved;
-};
 const packageJson = require("./package.json");
 let mainWin;
 let tray = null;
@@ -180,7 +79,6 @@ const throttle = (func, wait = RESIZE_THROTTLE_MS) => {
     }
   };
 };
-
 const getFingerprint = async () => {
   // First, try to get cached fingerprint
   let deviceUuid = store.get("fingerPrint");
@@ -205,6 +103,270 @@ const getFingerprint = async () => {
   let fingerprint = uuidv4().replace(/-/g, "");
   store.set("fingerPrint", fingerprint);
   return fingerprint;
+};
+const extractClixmlErrors = (text) => {
+  if (!text) return "";
+  const matches = text.match(
+    /<S S="Error">([^<]*(?:<[^/][^>]*>[^<]*<\/[^>]*>)*[^<]*)<\/S>/g
+  );
+  if (!matches) return text;
+  return matches
+    .map((m) =>
+      m
+        .replace(/<\/?S[^>]*>/g, "")
+        .replace(/<[^>]+>/g, "")
+        .replace(/_x000D__x000A_/g, "\n")
+        .trim()
+    )
+    .filter(Boolean)
+    .join("\n");
+};
+
+const runPowerShellScript = (script, timeout = 30000) => {
+  return new Promise((resolve, reject) => {
+    const encodedCommand = Buffer.from(script, "utf16le").toString("base64");
+    execFile(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Sta",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        encodedCommand,
+      ],
+      {
+        windowsHide: true,
+        timeout,
+        maxBuffer: 1024 * 1024,
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          const rawMessage = (stderr || stdout || error.message || "").trim();
+          const cleanMessage = extractClixmlErrors(rawMessage) || rawMessage;
+          reject(new Error(cleanMessage));
+          return;
+        }
+        resolve((stdout || "").trim());
+      }
+    );
+  });
+};
+
+const OCR_TEMP_DIR = path.join(configDir, "ocr-tmp");
+
+// macOS OCR 二进制支持的语言（VNRecognizeTextRequest recognitionLanguages）
+const MACOS_OCR_LANGS = new Set([
+  "zh-Hans",
+  "zh-Hant",
+  "en-US",
+  "ja-JP",
+  "ko-KR",
+  "fr-FR",
+]);
+
+// 把渲染进程传入的语言代码映射为各平台可识别的标签
+// key: 应用内统一代码；value: { macos, win }
+const OCR_LANG_MAP = {
+  "zh-CN": { macos: "zh-Hans", win: "zh-Hans-CN" },
+  "zh-SG": { macos: "zh-Hans", win: "zh-Hans-CN" },
+  "zh-TW": { macos: "zh-Hant", win: "zh-Hant-TW" },
+  "zh-HK": { macos: "zh-Hant", win: "zh-Hant-HK" },
+  "zh-Hans": { macos: "zh-Hans", win: "zh-Hans-CN" },
+  "zh-Hant": { macos: "zh-Hant", win: "zh-Hant-TW" },
+  en: { macos: "en-US", win: "en-US" },
+  "en-US": { macos: "en-US", win: "en-US" },
+  "en-GB": { macos: "en-US", win: "en-GB" },
+  ja: { macos: "ja-JP", win: "ja" },
+  "ja-JP": { macos: "ja-JP", win: "ja" },
+  ko: { macos: "ko-KR", win: "ko" },
+  "ko-KR": { macos: "ko-KR", win: "ko" },
+  fr: { macos: "fr-FR", win: "fr" },
+  "fr-FR": { macos: "fr-FR", win: "fr" },
+};
+
+const resolveOcrLang = (lang) => {
+  if (!lang || lang === "auto") return { macos: "auto", win: "auto" };
+  return OCR_LANG_MAP[lang] || { macos: lang, win: lang };
+};
+
+// 从 base64 或 dataURL 中解析出 { buffer, ext }
+const parseOcrImageInput = (input) => {
+  if (typeof input !== "string" || !input) {
+    throw new Error("Invalid image data");
+  }
+  // dataURL: data:image/png;base64,xxxx
+  const dataUrlMatch = input.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+  if (dataUrlMatch) {
+    const ext =
+      dataUrlMatch[1].toLowerCase() === "jpeg"
+        ? "jpg"
+        : dataUrlMatch[1].toLowerCase();
+    return { buffer: Buffer.from(dataUrlMatch[2], "base64"), ext };
+  }
+  // 纯 base64，按 PNG 处理
+  return { buffer: Buffer.from(input, "base64"), ext: "png" };
+};
+
+const writeOcrTempImage = (buffer, ext) => {
+  if (!fs.existsSync(OCR_TEMP_DIR)) {
+    fs.mkdirSync(OCR_TEMP_DIR, { recursive: true });
+  }
+  const fileName = `ocr-${process.pid}-${Date.now()}.${ext}`;
+  const filePath = path.join(OCR_TEMP_DIR, fileName);
+  fs.writeFileSync(filePath, buffer);
+  return filePath;
+};
+
+const cleanWindowsOcrText = (text) => {
+  if (!text) return text;
+  // Windows.Media.Ocr 对中日韩等无词边界的语言按"字"分词，Text 用空格连接，
+  // 导致中文每字之间出现空格。循环去除 CJK 文字/全角标点之间的空格，
+  // 保留英文与数字之间的空格。单次 replace 无法合并连续序列（如"符 号 学"），
+  // 需循环直到无变化。
+  //
+  // CJK 范围用 Unicode 码点表示：
+  //   一-龿   CJK 统一汉字（基本区）
+  //   㐀-䶿   CJK 扩展 A 区
+  //   ぀-ヿ   日文平假名 / 片假名
+  //   가-힯   韩文谚文音节
+  //   　-〿   CJK 符号与标点（全角空格、· 、。 等）
+  //   ＀-￯   全角符号（全角字母数字、（） 等）
+  const cjk =
+    "\\u4e00-\\u9fbf\\u3400-\\u4dbf\\u3040-\\u30ff\\uac00-\\ud7af\\u3000-\\u303f\\uff00-\\uffef";
+  const pattern = new RegExp("([" + cjk + "])\\s+([" + cjk + "])", "gu");
+  let prev;
+  let cur = text;
+  do {
+    prev = cur;
+    cur = cur.replace(pattern, "$1$2");
+  } while (cur !== prev);
+  return cur;
+};
+
+// Windows: 通过 PowerShell 调用 Windows.Media.Ocr (WinRT)
+const runWindowsOcr = (imagePath, winLang) => {
+  // PowerShell 脚本里用单引号包裹路径，需转义内部单引号
+  const escapePsSingle = (s) => s.replace(/'/g, "''");
+  const escapedPath = escapePsSingle(imagePath);
+  const langClause =
+    winLang === "auto"
+      ? "[Windows.Media.Ocr.OcrEngine,Windows.Media.Ocr,ContentType=WindowsRuntime]::TryCreateFromUserProfileLanguages()"
+      : "$( $__lang = [Windows.Globalization.Language,Windows.Globalization,ContentType=WindowsRuntime]::new('" +
+        escapePsSingle(winLang) +
+        "'); [Windows.Media.Ocr.OcrEngine,Windows.Media.Ocr,ContentType=WindowsRuntime]::TryCreateFromLanguage($__lang) )";
+  const script = `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | ? { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1' })[0]
+function Await($WinRtTask, $ResultType) {
+  $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
+  $netTask = $asTask.Invoke($null, @($WinRtTask))
+  $netTask.Wait(-1) | Out-Null
+  $netTask.Result
+}
+function EncodeOut($prefix, $text) {
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+  Write-Output -NoEnumerate ($prefix + [Convert]::ToBase64String($bytes))
+}
+try {
+  $path = '${escapedPath}'
+  $file = Await ([Windows.Storage.StorageFile,Windows.Storage,ContentType=WindowsRuntime]::GetFileFromPathAsync($path)) ([Windows.Storage.StorageFile])
+  $stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+  $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder,Windows.Graphics.Imaging,ContentType=WindowsRuntime]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+  $bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+  $engine = ${langClause}
+  if ($null -eq $engine) { Write-Output 'LANGERR'; exit 0 }
+  $result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+  EncodeOut 'OK' $result.Text
+} catch {
+  EncodeOut 'ERR' $_.Exception.Message
+  exit 0
+}
+`;
+  return runPowerShellScript(script, 60000).then((text) => {
+    const trimmed = (text || "").trim();
+    if (!trimmed) {
+      throw new Error("Windows OCR returned empty result");
+    }
+    if (trimmed === "LANGERR") {
+      const err = new Error(
+        "Language package not installed! See: https://support.microsoft.com/help/17213"
+      );
+      err.code = "LANG_NOT_INSTALLED";
+      throw err;
+    }
+    if (trimmed.startsWith("ERR")) {
+      const msg = Buffer.from(trimmed.slice(3), "base64")
+        .toString("utf8")
+        .trim();
+      throw new Error(msg || "Windows OCR failed");
+    }
+    if (trimmed.startsWith("OK")) {
+      const b64 = trimmed.slice(2);
+      const raw = b64 ? Buffer.from(b64, "base64").toString("utf8") : "";
+      return cleanWindowsOcrText(raw);
+    }
+    throw new Error("Windows OCR returned unexpected output");
+  });
+};
+
+// macOS: 调用打包的 Vision framework 二进制
+const runMacosOcr = (imagePath, macosLang) => {
+  const arch = process.arch; // arm64 / x64
+  const archName =
+    arch === "arm64" ? "aarch64" : arch === "x64" ? "x86_64" : arch;
+  const binPath = isDev
+    ? path.join(__dirname, "assets/macos/ocr-" + archName + "-apple-darwin")
+    : path.join(
+        process.resourcesPath,
+        "assets/macos/ocr-" + archName + "-apple-darwin"
+      );
+  if (!fs.existsSync(binPath)) {
+    const err = new Error("macOS OCR binary not found: " + binPath);
+    err.code = "BIN_NOT_FOUND";
+    throw err;
+  }
+  return new Promise((resolve, reject) => {
+    execFile(
+      binPath,
+      [imagePath, macosLang],
+      { timeout: 60000, maxBuffer: 10 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error) {
+          const msg = (stderr || error.message || "").trim();
+          const err = new Error(msg || "macOS OCR failed");
+          err.code = "BIN_FAILED";
+          reject(err);
+          return;
+        }
+        resolve((stdout || "").trim());
+      }
+    );
+  });
+};
+
+const getWindowHandleValue = (win) => {
+  if (!win || typeof win.getNativeWindowHandle !== "function") {
+    return "";
+  }
+
+  try {
+    const handle = win.getNativeWindowHandle();
+    if (!Buffer.isBuffer(handle) || handle.length === 0) {
+      return "";
+    }
+
+    if (handle.length >= 8 && typeof handle.readBigUInt64LE === "function") {
+      return handle.readBigUInt64LE(0).toString();
+    }
+
+    return handle.readUInt32LE(0).toString();
+  } catch (error) {
+    console.warn("Failed to resolve native window handle:", error);
+    return "";
+  }
 };
 
 const loadUrlInAuxWindow = async (win, url) => {
@@ -238,6 +400,296 @@ const loadUrlInAuxWindow = async (win, url) => {
   await wc.loadURL(url);
 };
 
+const getWindowsHelloScript = (mode, message = "", hwnd = "") => {
+  const escapedMessage = message.replace(/'/g, "''");
+  const escapedHwnd = String(hwnd || "").replace(/'/g, "''");
+  return `
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+
+function Invoke-WinRtAsync {
+  param(
+    [Parameter(Mandatory = $true)] $Operation,
+    [Parameter(Mandatory = $true)] [Type[]] $ResultTypes
+  )
+
+  $method = [System.WindowsRuntimeSystemExtensions].GetMethods() |
+    Where-Object {
+      $_.Name -eq 'AsTask' -and
+      $_.IsGenericMethodDefinition -and
+      $_.GetGenericArguments().Count -eq $ResultTypes.Count -and
+      $_.GetParameters().Count -eq 1
+    } |
+    Select-Object -First 1
+
+  if (-not $method) {
+    throw 'Unable to bridge Windows Runtime async operation.'
+  }
+
+  $genericMethod = $method.MakeGenericMethod($ResultTypes)
+  $task = $genericMethod.Invoke($null, @($Operation))
+  return $task.GetAwaiter().GetResult()
+}
+
+function Request-WindowsHelloVerification {
+  param(
+    [Parameter(Mandatory = $true)] [string] $Message,
+    [string] $Hwnd
+  )
+
+  $isWindowInteropSupported = [Environment]::OSVersion.Version.Build -ge 22000 -and -not [string]::IsNullOrWhiteSpace($Hwnd)
+
+  if (-not $isWindowInteropSupported) {
+    return Invoke-WinRtAsync -Operation ($verifier::RequestVerificationAsync($Message)) -ResultTypes @([Windows.Security.Credentials.UI.UserConsentVerificationResult])
+  }
+
+  Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+namespace KoodoReaderInterop
+{
+    [ComImport]
+    [Guid("39E050C3-4E74-441A-8DC0-B81104DF949C")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIInspectable)]
+    public interface IUserConsentVerifierInterop
+    {
+        [return: MarshalAs(UnmanagedType.IInspectable)]
+        object RequestVerificationForWindowAsync(
+            IntPtr appWindow,
+            [MarshalAs(UnmanagedType.HString)] string message,
+            [In] ref Guid riid);
+    }
+
+    public static class UserConsentVerifierInteropHelper
+    {
+        public static object RequestVerificationForWindow(object activationFactory, long hwnd, string message, Guid riid)
+        {
+            IntPtr ptr = IntPtr.Zero;
+
+            try
+            {
+                ptr = Marshal.GetIUnknownForObject(activationFactory);
+                var interop = (IUserConsentVerifierInterop)Marshal.GetTypedObjectForIUnknown(ptr, typeof(IUserConsentVerifierInterop));
+                return interop.RequestVerificationForWindowAsync(new IntPtr(hwnd), message, ref riid);
+            }
+            finally
+            {
+                if (ptr != IntPtr.Zero)
+                {
+                    Marshal.Release(ptr);
+                }
+            }
+        }
+    }
+}
+"@
+
+  $activationFactory = [System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeMarshal]::GetActivationFactory($verifier)
+  $asyncOperationGuid = [Guid]::Parse('fd596ffd-2318-558f-9dbe-d21df43764a5')
+  $operation = [KoodoReaderInterop.UserConsentVerifierInteropHelper]::RequestVerificationForWindow($activationFactory, [Int64]::Parse($Hwnd), $Message, $asyncOperationGuid)
+  return Invoke-WinRtAsync -Operation $operation -ResultTypes @([Windows.Security.Credentials.UI.UserConsentVerificationResult])
+}
+
+$verifier = [Windows.Security.Credentials.UI.UserConsentVerifier, Windows.Security.Credentials.UI, ContentType = WindowsRuntime]
+$availability = Invoke-WinRtAsync -Operation ($verifier::CheckAvailabilityAsync()) -ResultTypes @([Windows.Security.Credentials.UI.UserConsentVerifierAvailability])
+
+if ('${mode}' -eq 'check') {
+  [Console]::Out.Write((@{
+    available = ($availability.ToString() -eq 'Available')
+    status = $availability.ToString()
+  } | ConvertTo-Json -Compress))
+  exit 0
+}
+
+if ($availability.ToString() -ne 'Available') {
+  [Console]::Out.Write((@{
+    success = $false
+    code = 'Unavailable'
+    status = $availability.ToString()
+  } | ConvertTo-Json -Compress))
+  exit 0
+}
+
+try {
+  $result = Request-WindowsHelloVerification -Message '${escapedMessage}' -Hwnd '${escapedHwnd}'
+  [Console]::Out.Write((@{
+    success = ($result.ToString() -eq 'Verified')
+    code = $result.ToString()
+    status = $availability.ToString()
+  } | ConvertTo-Json -Compress))
+} catch {
+  [Console]::Out.Write((@{
+    success = $false
+    code = 'Error'
+    status = $_.Exception.Message
+  } | ConvertTo-Json -Compress))
+}
+`.trim();
+};
+
+const getBiometricCapability = async () => {
+  if (process.platform === "darwin") {
+    const available =
+      typeof systemPreferences.canPromptTouchID === "function" &&
+      systemPreferences.canPromptTouchID();
+    return {
+      available,
+      provider: "Touch ID",
+      platform: process.platform,
+      status: available ? "Available" : "Unavailable",
+    };
+  }
+
+  if (process.platform === "win32") {
+    try {
+      const output = await runPowerShellScript(getWindowsHelloScript("check"));
+      const result = output ? JSON.parse(output) : {};
+      return {
+        available: !!result.available,
+        provider: "Windows Hello",
+        platform: process.platform,
+        status: result.status || "Unavailable",
+      };
+    } catch (error) {
+      return {
+        available: false,
+        provider: "Windows Hello",
+        platform: process.platform,
+        status: "Error",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  return {
+    available: false,
+    provider: "Biometric",
+    platform: process.platform,
+    status: "Unsupported",
+  };
+};
+
+const promptBiometricAuth = async (
+  promptMessage = "Authenticate",
+  owningWindow = null
+) => {
+  if (process.platform === "darwin") {
+    const available =
+      typeof systemPreferences.canPromptTouchID === "function" &&
+      systemPreferences.canPromptTouchID();
+    if (!available) {
+      return {
+        success: false,
+        code: "Unavailable",
+        provider: "Touch ID",
+      };
+    }
+
+    try {
+      await systemPreferences.promptTouchID(promptMessage);
+      return {
+        success: true,
+        code: "Verified",
+        provider: "Touch ID",
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        success: false,
+        code: /cancel/i.test(message) ? "Canceled" : "Failed",
+        provider: "Touch ID",
+      };
+    }
+  }
+
+  if (process.platform === "win32") {
+    try {
+      const hwnd = getWindowHandleValue(owningWindow);
+      const output = await runPowerShellScript(
+        getWindowsHelloScript("verify", promptMessage, hwnd),
+        120000
+      );
+      const result = output ? JSON.parse(output) : {};
+      return {
+        success: !!result.success,
+        code:
+          result.code === "Unavailable" && result.status
+            ? result.status
+            : result.code || "Error",
+        provider: "Windows Hello",
+      };
+    } catch (error) {
+      console.error("Biometric verification error:", error.message);
+      return {
+        success: false,
+        code: "Error",
+        provider: "Windows Hello",
+      };
+    }
+  }
+
+  return {
+    success: false,
+    code: "Unsupported",
+    provider: "Biometric",
+  };
+};
+
+// Discord Rich Presence setup
+let discordRPCClient = null;
+let discordRPCReady = false;
+let discordRPCConnecting = false;
+const DISCORD_CLIENT_ID = "1490863275074781305"; // Koodo Reader Discord App ID
+
+function initDiscordRPC() {
+  if (discordRPCConnecting || discordRPCReady) return Promise.resolve();
+  discordRPCConnecting = true;
+  return new Promise((resolve) => {
+    try {
+      const DiscordRPC = require("discord-rpc");
+      DiscordRPC.register(DISCORD_CLIENT_ID);
+      const client = new DiscordRPC.Client({ transport: "ipc" });
+      client.on("ready", () => {
+        console.info("Discord RPC connected");
+        discordRPCClient = client;
+        discordRPCReady = true;
+        discordRPCConnecting = false;
+        resolve();
+      });
+      client.login({ clientId: DISCORD_CLIENT_ID }).catch((err) => {
+        console.warn("Discord RPC login failed:", err.message);
+        discordRPCClient = null;
+        discordRPCReady = false;
+        discordRPCConnecting = false;
+        resolve();
+      });
+    } catch (e) {
+      console.warn("Discord RPC init failed:", e.message);
+      discordRPCClient = null;
+      discordRPCReady = false;
+      discordRPCConnecting = false;
+      resolve();
+    }
+  });
+}
+function destroyDiscordRPC() {
+  if (discordRPCClient) {
+    try {
+      discordRPCClient.destroy();
+    } catch (_) {}
+    discordRPCClient = null;
+  }
+  discordRPCReady = false;
+  discordRPCConnecting = false;
+}
+function buildProgressBar(percentage) {
+  const total = 10;
+  const filled = Math.round((percentage / 100) * total);
+  const empty = total - filled;
+  return "▓".repeat(filled) + "░".repeat(empty);
+}
 const singleInstance = app.requestSingleInstanceLock();
 var filePath = null;
 var pendingDeepLink = null;
@@ -257,36 +709,13 @@ log.initialize();
 store.set("appVersion", packageJson.version);
 store.set("appPlatform", os.platform() + " " + os.release());
 const mainWinDisplayScale = store.get("mainWinDisplayScale") || 1;
-const getNativeThemeSource = (appSkin) => {
-  if (appSkin === "night") {
-    return "dark";
-  }
-  if (appSkin === "light") {
-    return "light";
-  }
-  return "system";
-};
-const getNativeDarkColorStatus = () => {
-  if (
-    typeof electronNativeTheme.shouldUseDarkColorsForSystemIntegratedUI !==
-    "undefined"
-  ) {
-    return electronNativeTheme.shouldUseDarkColorsForSystemIntegratedUI;
-  }
-  return electronNativeTheme.shouldUseDarkColors;
-};
-const getAppBackgroundColor = () => {
-  const appSkin = store.get("appSkin");
-  const isDark =
-    appSkin === "night" || (appSkin !== "light" && getNativeDarkColorStatus());
-  return isDark ? "rgba(47, 52, 55, 1)" : "#fff";
-};
 let options = {
   width: parseInt(store.get("mainWinWidth") || 1050) / mainWinDisplayScale,
   height: parseInt(store.get("mainWinHeight") || 660) / mainWinDisplayScale,
   x: parseInt(store.get("mainWinX")),
   y: parseInt(store.get("mainWinY")),
-  backgroundColor: getAppBackgroundColor(),
+  backgroundColor:
+    store.get("appSkin") === "night" ? "rgba(47, 52, 55, 1)" : "#fff",
   minWidth: 300,
   minHeight: 100,
   webPreferences: {
@@ -302,26 +731,6 @@ let options = {
   },
 };
 const Database = require("better-sqlite3");
-const getReaderWindowChromeOptions = () => {
-  if (isDev) {
-    return { frame: true };
-  }
-  return { frame: false };
-};
-const bindReaderWindowState = (win) => {
-  const sendState = (isFullScreen) => {
-    if (!win || win.isDestroyed()) return;
-    win.webContents.send("reader-window-state", {
-      isMaximized: win.isMaximized(),
-      isFullScreen:
-        typeof isFullScreen === "boolean" ? isFullScreen : win.isFullScreen(),
-    });
-  };
-  win.on("maximize", () => sendState());
-  win.on("unmaximize", () => sendState());
-  win.on("enter-full-screen", () => sendState(true));
-  win.on("leave-full-screen", () => sendState(false));
-};
 if (os.platform() === "linux") {
   options = Object.assign({}, options, {
     icon: path.join(__dirname, "./build/assets/icon.png"),
@@ -339,9 +748,6 @@ if (!singleInstance) {
     // Handle deep link passed via second-instance argv
     const deepLink = argv.find((arg) => arg.startsWith("koodo-reader://"));
     if (deepLink) {
-      if (deepLink === pendingDeepLink) {
-        pendingDeepLink = null;
-      }
       handleCallback(deepLink);
     }
   });
@@ -404,19 +810,43 @@ const removePickerUtil = (config) => {
     pickerUtilCache[config.service] = null;
   }
 };
+const getNativeThemeSource = (appSkin) => {
+  if (appSkin === "night") {
+    return "dark";
+  }
+  if (appSkin === "light") {
+    return "light";
+  }
+  return "system";
+};
+const getNativeDarkColorStatus = () => {
+  if (
+    typeof electronNativeTheme.shouldUseDarkColorsForSystemIntegratedUI !==
+    "undefined"
+  ) {
+    return electronNativeTheme.shouldUseDarkColorsForSystemIntegratedUI;
+  }
+  return electronNativeTheme.shouldUseDarkColors;
+};
 const applyNativeThemeSource = (appSkin) => {
   if (process.type !== "browser") {
     return false;
   }
   electronNativeTheme.themeSource = getNativeThemeSource(appSkin);
   store.set("appSkin", appSkin || "system");
-  options.backgroundColor = getAppBackgroundColor();
-  if (mainWin && !mainWin.isDestroyed()) {
-    mainWin.setBackgroundColor(options.backgroundColor);
-  }
   return getNativeDarkColorStatus();
 };
 applyNativeThemeSource(store.get("appSkin"));
+const buildProxyUrl = (config) => {
+  const authentication =
+    config.username || config.password
+      ? `${encodeURIComponent(config.username || "")}:${encodeURIComponent(config.password || "")}@`
+      : "";
+  const portNumber = parseInt(config.port);
+  return config.type === "socks5"
+    ? `socks5://${authentication}${config.host}:${portNumber}`
+    : `http://${authentication}${config.host}:${portNumber}`;
+};
 const applyProxyToSession = async () => {
   const { session } = require("electron");
   const http = require("http");
@@ -426,10 +856,7 @@ const applyProxyToSession = async () => {
   const isEnabled =
     config && config.type !== "none" && config.enabled !== false && config.host;
   if (!isEnabled) {
-    // 未启用应用内代理时，跟随操作系统代理（与浏览器行为一致）。
-    // 此前强制 direct 会绕过系统代理（如 Clash/v2rayN 等），导致 Electron 端
-    // 直连 OCR 的 wasm/模型等境外 CDN 不可达（网页端走系统代理所以正常）。
-    await defaultSession.setProxy({ mode: "system" });
+    await defaultSession.setProxy({ mode: "direct" });
     https.globalAgent = new https.Agent();
     http.globalAgent = new http.Agent();
     return;
@@ -553,17 +980,12 @@ const createMainWin = () => {
     delete options.x;
     delete options.y;
   }
-  mainWin = new BrowserWindow({ ...options, show: false });
-  mainWin.once("ready-to-show", () => {
-    if (mainWin && !mainWin.isDestroyed()) {
-      if (store.get("isAutoMaximizeWin") === "yes") {
-        mainWin.maximize();
-      }
-      mainWin.show();
-    }
-  });
+  mainWin = new BrowserWindow(options);
   if (store.get("isAlwaysOnTop") === "yes") {
     mainWin.setAlwaysOnTop(true);
+  }
+  if (store.get("isAutoMaximizeWin") === "yes") {
+    mainWin.maximize();
   }
 
   if (!isDev) {
@@ -571,7 +993,7 @@ const createMainWin = () => {
   }
 
   const urlLocation = isDev
-    ? "http://127.0.0.1:3000"
+    ? "http://localhost:3000"
     : `file://${path.join(__dirname, "./build/index.html")}`;
   mainWin.loadURL(urlLocation);
   // Handle deep link on cold start: wait for renderer to mount its IPC listeners
@@ -829,9 +1251,6 @@ const createMainWin = () => {
     if (typeof filePath !== "string" || !filePath) {
       throw new TypeError("Invalid file path");
     }
-    if (!fs.existsSync(filePath)) {
-      throw new Error(`File not found: ${path.basename(filePath)}`);
-    }
     return new Promise((resolve, reject) => {
       const hash = nodeCrypto.createHash("md5");
       const stream = fs.createReadStream(filePath);
@@ -852,10 +1271,39 @@ const createMainWin = () => {
   });
   // Discord RPC handlers
   ipcMain.handle("discord-rpc-update", async (event, config) => {
-    await setDiscordActivity(config);
+    const { bookTitle, author, percentage } = config;
+    if (!discordRPCReady) {
+      await initDiscordRPC();
+    }
+    if (!discordRPCClient || !discordRPCReady) return;
+    try {
+      const progressBar = buildProgressBar(percentage);
+      await discordRPCClient.setActivity({
+        details: bookTitle,
+        state: `${progressBar} ${percentage}%  |  by ${author}`,
+        largeImageKey: "koodo_reader_logo",
+        largeImageText: "Koodo Reader",
+        startTimestamp: Date.now(),
+        instance: false,
+        buttons: [
+          {
+            label: "Get Koodo Reader",
+            url: "https://koodoreader.com",
+          },
+        ],
+      });
+    } catch (e) {
+      console.warn("Failed to set Discord activity:", e.message);
+    }
   });
   ipcMain.handle("discord-rpc-clear", async (event) => {
-    await clearDiscordActivity();
+    if (discordRPCClient) {
+      try {
+        await discordRPCClient.clearActivity();
+      } catch (e) {
+        console.warn("Failed to clear Discord activity:", e.message);
+      }
+    }
   });
   ipcMain.handle("update-win-app", (event, config) => {
     let fileName = `koodo-reader-installer.exe`;
@@ -924,6 +1372,9 @@ const createMainWin = () => {
   ipcMain.handle("open-book", (event, config) => {
     let { url, isMergeWord, isAutoFullscreen, isAutoMaximize, isPreventSleep } =
       config;
+    if (isMergeWord) {
+      delete options.backgroundColor;
+    }
     store.set({
       url,
       isMergeWord: isMergeWord || "no",
@@ -940,11 +1391,7 @@ const createMainWin = () => {
       readerWindowList.push(readerWindow);
     }
     if (isAutoFullscreen === "yes" || isAutoMaximize === "yes") {
-      readerWindow = new BrowserWindow({
-        ...options,
-        ...getReaderWindowChromeOptions(),
-        backgroundColor: isMergeWord ? undefined : getAppBackgroundColor(),
-      });
+      readerWindow = new BrowserWindow(options);
       readerWindow.webContents.on(
         "console-message",
         (_event, level, message) => {
@@ -973,10 +1420,9 @@ const createMainWin = () => {
         height: parseInt(store.get("windowHeight") || 660) / scaleRatio,
         x: isWindowVisible ? parseInt(store.get("windowX")) : undefined,
         y: isWindowVisible ? parseInt(store.get("windowY")) : undefined,
-        ...getReaderWindowChromeOptions(),
+        frame: isMergeWord === "yes" ? false : true,
         hasShadow: isMergeWord === "yes" ? false : true,
         transparent: isMergeWord === "yes" ? true : false,
-        backgroundColor: isMergeWord ? undefined : getAppBackgroundColor(),
       });
       readerWindow.webContents.on(
         "console-message",
@@ -989,7 +1435,6 @@ const createMainWin = () => {
       readerWindow.loadURL(url);
       // readerWindow.webContents.openDevTools();
     }
-    bindReaderWindowState(readerWindow);
     if (store.get("isAlwaysOnTop") === "yes") {
       readerWindow.setAlwaysOnTop(true);
     }
@@ -1037,7 +1482,13 @@ const createMainWin = () => {
       if (mainWin && !mainWin.isDestroyed()) {
         mainWin.webContents.send("reading-finished", {});
       }
-      clearDiscordActivity();
+      if (discordRPCClient) {
+        try {
+          discordRPCClient.clearActivity();
+        } catch (e) {
+          console.warn("Failed to clear Discord activity:", e.message);
+        }
+      }
     });
     // Renderer finished flushing reading-time data — proceed with actual close
     ipcMain.once("reader-close-ready", () => {
@@ -1051,8 +1502,7 @@ const createMainWin = () => {
   });
   ipcMain.handle("generate-tts", async (event, voiceConfig) => {
     const { text, speed, pluginKey, config } = voiceConfig || {};
-    const plugin =
-      getVoicePlugin(pluginKey) || resolveCustomVoicePlugin(voiceConfig || {});
+    const plugin = getVoicePlugin(pluginKey);
     if (
       !plugin ||
       typeof text !== "string" ||
@@ -1076,8 +1526,7 @@ const createMainWin = () => {
   });
   ipcMain.handle("get-tts-voices", async (event, request) => {
     const { pluginKey, config } = request || {};
-    const plugin =
-      getVoicePlugin(pluginKey) || resolveCustomVoicePlugin(request || {});
+    const plugin = getVoicePlugin(pluginKey);
     if (
       !plugin ||
       typeof plugin.getTTSVoice !== "function" ||
@@ -1087,17 +1536,10 @@ const createMainWin = () => {
     ) {
       throw new Error("Invalid TTS voice request");
     }
-    let voices = [];
-    try {
-      voices = await plugin.getTTSVoice(config);
-      if (!Array.isArray(voices)) {
-        throw new Error("Invalid TTS voice list");
-      }
-    } catch (error) {
-      console.error("Error getting TTS voices:", error);
-      throw new Error(`Failed to get TTS voices: ${error.message}`);
+    const voices = await plugin.getTTSVoice(config);
+    if (!Array.isArray(voices)) {
+      throw new Error("Invalid TTS voice list");
     }
-
     return voices;
   });
   ipcMain.handle("cloud-upload", async (event, config) => {
@@ -1179,92 +1621,19 @@ const createMainWin = () => {
   });
 
   ipcMain.handle("clear-tts", async (event, config) => {
-    if (!fs.existsSync(getTTSCacheDirPath())) {
-      await fsExtra.mkdir(getTTSCacheDirPath());
+    if (!fs.existsSync(path.join(dirPath, "tts"))) {
+      return "pong";
     } else {
-      await fsExtra.remove(getTTSCacheDirPath());
-      await fsExtra.mkdir(getTTSCacheDirPath());
-    }
-    ttsCacheUtil.resetTTSAudioIndex(dirPath);
-  });
-  // 查询缓存大小（字节）：type 为 "tts"、"temp" 或 "all"
-  ipcMain.handle("get-cache-size", async (event, config) => {
-    const cacheType = config && config.type;
-    if (cacheType === "tts") {
-      return getDirSize(getTTSCacheDirPath());
-    } else if (cacheType === "temp") {
-      return getTempCacheDirPaths().reduce(
-        (total, cacheDir) => total + getDirSize(cacheDir),
-        0
-      );
-    } else if (cacheType === "all") {
-      const storagePath =
-        config && typeof config.storagePath === "string"
-          ? config.storagePath
-          : dataPath;
-      return getDirSize(storagePath) + getDirSize(getTTSCacheDirPath());
-    }
-    throw new Error("Invalid cache size request");
-  });
-  // 清理临时缓存：漫画解包、OCR 结果、整页翻译缓存与书籍导入临时文件
-  ipcMain.handle("clear-temp-cache", async (event, config) => {
-    for (const cacheDir of getTempCacheDirPaths()) {
-      if (fs.existsSync(cacheDir)) {
-        await fsExtra.remove(cacheDir);
+      const fsExtra = require("fs-extra");
+      try {
+        await fsExtra.remove(path.join(dirPath, "tts"));
+        await fsExtra.mkdir(path.join(dirPath, "tts"));
+        return "pong";
+      } catch (err) {
+        console.error(err);
+        return "pong";
       }
     }
-  });
-  // 官方 AI 语音本地缓存查询：命中返回 file:// 地址，未命中返回空字符串
-  ipcMain.handle("get-cached-tts", async (event, config) => {
-    const { text, speed, voiceIdentifier } = config || {};
-    if (
-      typeof text !== "string" ||
-      !text ||
-      typeof speed !== "number" ||
-      !Number.isFinite(speed) ||
-      typeof voiceIdentifier !== "string" ||
-      !voiceIdentifier
-    ) {
-      throw new Error("Invalid TTS cache request");
-    }
-    const key = ttsCacheUtil.getTTSAudioKey({
-      text,
-      speed,
-      voiceIdentifier,
-    });
-    const audioPath = ttsCacheUtil.findCachedTTSAudio(dirPath, key);
-    if (audioPath && fs.existsSync(audioPath)) {
-      return {
-        key,
-        audioPath: pathToFileURL(audioPath).toString(),
-      };
-    }
-    if (audioPath) {
-      ttsCacheUtil.resetTTSAudioIndex(dirPath);
-    }
-    return { key, audioPath: "" };
-  });
-  // 官方 AI 语音音频落盘：key 为内容哈希，跨会话复用
-  ipcMain.handle("save-tts-audio", async (event, config) => {
-    const { key, base64 } = config || {};
-    const rawBase64 =
-      typeof base64 === "string" ? base64 : base64 && base64.audio_base64;
-    if (
-      !ttsCacheUtil.isTTSAudioKey(key) ||
-      typeof rawBase64 !== "string" ||
-      !rawBase64
-    ) {
-      throw new Error("Invalid TTS audio cache request");
-    }
-    const base64Data = rawBase64.includes("base64,")
-      ? rawBase64.split("base64,")[1]
-      : rawBase64;
-    const audioPath = ttsCacheUtil.saveTTSAudio(
-      dirPath,
-      key,
-      Buffer.from(base64Data, "base64")
-    );
-    return pathToFileURL(audioPath).toString();
   });
   ipcMain.handle("select-path", async (event) => {
     var path = await dialog.showOpenDialog({
@@ -1307,8 +1676,75 @@ const createMainWin = () => {
     }
   });
   ipcMain.handle("check-cloud-url", async (event, config) => {
+    const https = require("https");
+    const http = require("http");
+    const { URL } = require("url");
     const { url } = config;
-    return checkCloudUrl(url);
+    return new Promise((resolve) => {
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(url);
+      } catch (e) {
+        return resolve({ ok: false, reason: "invalid_url", detail: e.message });
+      }
+      const isHttps = parsedUrl.protocol === "https:";
+      const lib = isHttps ? https : http;
+      const port = parsedUrl.port
+        ? parseInt(parsedUrl.port)
+        : isHttps
+          ? 443
+          : 80;
+      const options = {
+        hostname: parsedUrl.hostname,
+        port,
+        path: parsedUrl.pathname || "/",
+        method: "HEAD",
+        timeout: 8000,
+        rejectUnauthorized: true,
+      };
+      const req = lib.request(options, (res) => {
+        resolve({
+          ok: true,
+          status: res.statusCode,
+          detail: `HTTP ${res.statusCode}`,
+        });
+      });
+      req.on("timeout", () => {
+        req.destroy();
+        resolve({
+          ok: false,
+          reason: "timeout",
+          detail: `Connection to ${parsedUrl.hostname}:${port} timed out after 8s`,
+        });
+      });
+      req.on("error", (err) => {
+        let reason = "unknown";
+        if (err.code === "ENOTFOUND") {
+          reason = "dns_failed";
+        } else if (err.code === "ECONNREFUSED") {
+          reason = "connection_refused";
+        } else if (err.code === "ECONNRESET") {
+          reason = "connection_reset";
+        } else if (err.code === "ETIMEDOUT") {
+          reason = "timeout";
+        } else if (
+          err.code === "CERT_HAS_EXPIRED" ||
+          err.code === "ERR_TLS_CERT_ALTNAME_INVALID" ||
+          err.code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE"
+        ) {
+          reason = "ssl_error";
+        } else if (err.message && err.message.includes("SSL")) {
+          reason = "ssl_error";
+        }
+        resolve({
+          ok: false,
+          reason,
+          code: err.code || "",
+          detail: err.message,
+        });
+      });
+      req.end();
+    });
   });
   ipcMain.handle("get-proxy-config", async () => {
     const config = store.get("proxyConfig") || {
@@ -1350,7 +1786,110 @@ const createMainWin = () => {
     return { ok: true };
   });
   ipcMain.handle("test-proxy-connection", async (event, config) => {
-    return testProxyConnection(config);
+    const https = require("https");
+    const { URL } = require("url");
+    const proxyConfig = config || {};
+    const validTypes = ["http", "socks5"];
+    if (!validTypes.includes(proxyConfig.type)) {
+      return { ok: false, reason: "invalid_input", detail: "unsupported type" };
+    }
+    if (
+      !proxyConfig.host ||
+      typeof proxyConfig.host !== "string" ||
+      proxyConfig.host.includes("://")
+    ) {
+      return { ok: false, reason: "invalid_input", detail: "invalid host" };
+    }
+    const portNumber = parseInt(proxyConfig.port);
+    if (isNaN(portNumber) || portNumber < 1 || portNumber > 65535) {
+      return { ok: false, reason: "invalid_input", detail: "invalid port" };
+    }
+    const proxyUrl = buildProxyUrl(proxyConfig);
+    let agent;
+    try {
+      if (proxyConfig.type === "socks5") {
+        const { SocksProxyAgent } = require("socks-proxy-agent");
+        agent = new SocksProxyAgent(proxyUrl);
+      } else {
+        const { HttpsProxyAgent } = require("https-proxy-agent");
+        agent = new HttpsProxyAgent(proxyUrl);
+      }
+    } catch (error) {
+      return { ok: false, reason: "agent_init_failed", detail: error.message };
+    }
+    const target = new URL("https://www.google.com/");
+    const startTime = Date.now();
+    return new Promise((resolve) => {
+      const options = {
+        hostname: target.hostname,
+        port: 443,
+        path: "/",
+        method: "HEAD",
+        timeout: 10000,
+        agent,
+        rejectUnauthorized: true,
+      };
+      const request = https.request(options, (response) => {
+        const elapsedMs = Date.now() - startTime;
+        if (response.statusCode === 407) {
+          return resolve({
+            ok: false,
+            reason: "proxy_auth_failed",
+            status: 407,
+            elapsedMs,
+            detail: `HTTP 407 Proxy Authentication Required`,
+          });
+        }
+        resolve({
+          ok:
+            response.statusCode &&
+            response.statusCode >= 200 &&
+            response.statusCode < 400,
+          status: response.statusCode,
+          elapsedMs,
+          detail: `HTTP ${response.statusCode}`,
+        });
+      });
+      request.on("timeout", () => {
+        request.destroy();
+        resolve({
+          ok: false,
+          reason: "timeout",
+          elapsedMs: Date.now() - startTime,
+          detail: `Connection to ${target.hostname} timed out after 10s`,
+        });
+      });
+      request.on("error", (error) => {
+        let reason = "unknown";
+        if (error.code === "ENOTFOUND") {
+          reason = "dns_failed";
+        } else if (error.code === "ECONNREFUSED") {
+          reason = "connection_refused";
+        } else if (error.code === "ECONNRESET") {
+          reason = "connection_reset";
+        } else if (error.code === "ETIMEDOUT") {
+          reason = "timeout";
+        } else if (error.code === "EPROTO") {
+          reason = "ssl_error";
+        } else if (
+          error.code === "CERT_HAS_EXPIRED" ||
+          error.code === "ERR_TLS_CERT_ALTNAME_INVALID" ||
+          error.code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE"
+        ) {
+          reason = "ssl_error";
+        } else if (error.message && error.message.includes("SSL")) {
+          reason = "ssl_error";
+        }
+        resolve({
+          ok: false,
+          reason,
+          code: error.code || "",
+          elapsedMs: Date.now() - startTime,
+          detail: error.message,
+        });
+      });
+      request.end();
+    });
   });
   ipcMain.handle("get-mac", async (event, config) => {
     const { machineIdSync } = require("node-machine-id");
@@ -1384,21 +1923,6 @@ const createMainWin = () => {
     return "success";
   });
 
-  ipcMain.handle("select-import-file", async (event) => {
-    const result = await dialog.showOpenDialog({
-      properties: ["openFile", "multiSelections"],
-      filters: [{ name: "Data Files", extensions: ["csv", "json"] }],
-    });
-    if (result.canceled || !Array.isArray(result.filePaths)) {
-      return [];
-    }
-    return result.filePaths.filter(
-      (filePath) =>
-        typeof filePath === "string" &&
-        ["csv", "json"].includes(filePath.split(".").pop().toLowerCase())
-    );
-  });
-
   ipcMain.handle("select-zip-file", async (event, config) => {
     const result = await dialog.showOpenDialog({
       properties: ["openFile"],
@@ -1426,30 +1950,18 @@ const createMainWin = () => {
             "mobi",
             "azw3",
             "azw",
-            "kdz",
             "htm",
             "html",
             "xml",
             "xhtml",
             "mhtml",
             "docx",
-            "doc",
-            "rtf",
             "md",
             "fb2",
-            "chm",
             "cbz",
             "cbt",
             "cbr",
             "cb7",
-            "pptx",
-            "ppt",
-            "xps",
-            "oxps",
-            "djvu",
-            "djv",
-            "ofd",
-            "caj",
           ],
         },
       ],
@@ -1530,229 +2042,370 @@ const createMainWin = () => {
   // 流式打包备份：遍历 dataPath 下的固定目录与配置文件，
   // 用 yazl 逐文件 addFile 直接写入目标 zip，避免将整库读入内存。
   ipcMain.handle("backup-path", async (event, config) => {
-    return backupToPath(config, (percent) => {
+    if (!config || typeof config !== "object") {
+      throw new TypeError("Invalid backup config");
+    }
+    const { targetPath, fileName, dataPath, dirs, files } = config;
+    if (
+      [targetPath, dataPath].some((v) => typeof v !== "string" || !v) ||
+      typeof fileName !== "string" ||
+      !fileName ||
+      !Array.isArray(dirs) ||
+      !Array.isArray(files)
+    ) {
+      throw new TypeError("Invalid backup arguments");
+    }
+    const sendProgress = (percent) => {
       if (mainWin && !mainWin.isDestroyed()) {
         mainWin.webContents.send("backup-progress", { percent });
       }
-    });
+    };
+    // 校验 dirs/files 路径均位于 dataPath 之内，防止路径穿越
+    const base = path.resolve(dataPath);
+    const assertInside = (p) => {
+      const resolved = path.resolve(p);
+      const rel = path.relative(base, resolved);
+      if (
+        rel.startsWith(".." + path.sep) ||
+        path.isAbsolute(rel) ||
+        rel.split(path.sep).includes("..")
+      ) {
+        throw new Error("Backup source path is outside the data directory");
+      }
+      return resolved;
+    };
+    try {
+      if (!fs.existsSync(targetPath)) {
+        fs.mkdirSync(targetPath, { recursive: true });
+      }
+      const destinationPath = path.join(targetPath, fileName);
+      const tempPath = destinationPath + ".tmp";
+      await new Promise((resolve, reject) => {
+        const zip = new yazl.ZipFile();
+        zip.level = 6;
+        const output = fs.createWriteStream(tempPath);
+        let totalBytes = 0;
+        let writtenBytes = 0;
+        // 条目源文件由 yazl 内部以 createReadStream 读取，读写出错时 yazl 虽会
+        // 触发 emit("error")，但 outputStream 的 "end" 不再走到，导致 promise
+        // 永久悬挂、进度 toast 卡死。统一收集错误：完成后销毁输出流再 reject，
+        // 主进程 catch 会清理 .tmp 并向渲染进程返回失败。
+        const errored = (err) => {
+          try {
+            output.destroy();
+          } catch (_) {}
+          reject(err);
+        };
+        output.on("error", errored);
+        zip.outputStream.on("error", errored);
+        zip.on("error", errored);
+        const finish = () => {
+          output.end();
+        };
+        output.on("close", resolve);
+        // 列出所有待打包的源文件并累计总字节数（用于进度估算）
+        const entries = [];
+        const collect = (zipDir, sourceDir) => {
+          let direntNames;
+          try {
+            direntNames = fs.readdirSync(sourceDir, { withFileTypes: true });
+          } catch (_) {
+            return;
+          }
+          if (direntNames.length === 0) return;
+          for (const entry of direntNames) {
+            const sourcePath = path.join(sourceDir, entry.name);
+            const entryZip = path.posix.join(zipDir, entry.name);
+            if (entry.isDirectory()) {
+              collect(entryZip, sourcePath);
+            } else if (entry.isFile()) {
+              try {
+                totalBytes += fs.statSync(sourcePath).size;
+              } catch (_) {}
+              entries.push({ sourcePath, entryZip });
+            }
+          }
+        };
+        for (const dir of dirs) {
+          const sourceDir = assertInside(path.join(dataPath, dir));
+          if (fs.existsSync(sourceDir)) {
+            zip.addEmptyDirectory(dir);
+            collect(dir, sourceDir);
+          }
+        }
+        for (const filePath of files) {
+          const sourcePath = assertInside(
+            path.resolve(dataPath, filePath.replace(/^[/\\]/, ""))
+          );
+          if (fs.existsSync(sourcePath)) {
+            try {
+              totalBytes += fs.statSync(sourcePath).size;
+            } catch (_) {}
+            entries.push({
+              sourcePath,
+              entryZip: path.posix.normalize(filePath.replace(/^[/\\]/, "")),
+            });
+          }
+        }
+        for (const entry of entries) {
+          zip.addFile(entry.sourcePath, entry.entryZip);
+        }
+        zip.end();
+        zip.outputStream.on("data", (chunk) => {
+          writtenBytes += chunk.length;
+        });
+        zip.outputStream.on("end", () => {
+          finish();
+        });
+        // 进度估算：zip.outputStream 无内建进度，按“已写入条目的源字节”
+        // 与总字节数的比例上报（压缩前后差异不影响 UI 展示）
+        zip.outputStream.pipe(output);
+        const report = setInterval(() => {
+          const percent = totalBytes
+            ? Math.min(100, Math.round((writtenBytes / totalBytes) * 100))
+            : 100;
+          sendProgress(percent);
+        }, 100);
+        zip.outputStream.on("end", () => {
+          clearInterval(report);
+        });
+      });
+      let tempStat;
+      try {
+        tempStat = fs.statSync(tempPath);
+      } catch (_) {
+        throw new Error("Backup output file was not created");
+      }
+      if (fs.existsSync(destinationPath)) {
+        fs.unlinkSync(destinationPath);
+      }
+      fs.renameSync(tempPath, destinationPath);
+      sendProgress(100);
+      return { ok: true, size: tempStat.size };
+    } catch (error) {
+      try {
+        const tempPath = path.join(targetPath, fileName) + ".tmp";
+        if (fs.existsSync(tempPath)) {
+          fs.unlinkSync(tempPath);
+        }
+      } catch (_) {}
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("backup-path failed:", message);
+      return { ok: false, error: message };
+    }
   });
-  // 流式解压恢复：restoreFromPath 直接流式写盘资产文件，config 类文件
-  // 回传渲染进程处理（.db 经 sql.js 合并，json 写入 ConfigService）。
+  // 流式解压恢复：用 yauzl 逐条目 openReadStream，避免把整个 zip 读入内存。
+  // 资产文件（book/cover/dict/background/font/snapshot）在主进程直接流式写盘，
+  // config 类文件（config/*.db、config.json、sync.json）回传渲染进程处理：
+  // .db 经 sql.js 解析后与本地记录合并写入，json 写入 ConfigService。
   ipcMain.handle("restore-path", async (event, config) => {
-    return restoreFromPath(config, (percent) => {
+    if (!config || typeof config !== "object") {
+      throw new TypeError("Invalid restore config");
+    }
+    const { filePath, dataPath } = config;
+    if (
+      typeof filePath !== "string" ||
+      !filePath ||
+      typeof dataPath !== "string" ||
+      !dataPath
+    ) {
+      throw new TypeError("Invalid restore arguments");
+    }
+    if (!fs.existsSync(filePath)) {
+      return { ok: false, error: "Backup file not found" };
+    }
+    const sendProgress = (percent) => {
       if (mainWin && !mainWin.isDestroyed()) {
         mainWin.webContents.send("restore-progress", { percent });
       }
-    });
-  });
-  // ---- Comic 压缩包（CBZ / CBT / CBR 等）按需解压 ----
-  // list-*-file：列出压缩包内的条目名；*-file：把指定的条目按需解压到
-  // dirPath/comic 目录，返回解压后的绝对路径列表。条目路径统一做穿越校验。
-  const assertExistingArchiveFile = (config, label) => {
-    const filePath = config && config.filePath;
-    if (typeof filePath !== "string" || !filePath) {
-      throw new TypeError(`Invalid ${label} path`);
-    }
-    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
-      throw new Error(`${label} not found: ${filePath}`);
-    }
-    return filePath;
-  };
-  const parseArchiveEntries = (entries) => {
-    if (entries === undefined || entries === null) return null;
-    if (!Array.isArray(entries) || entries.some((e) => typeof e !== "string")) {
-      throw new TypeError("Invalid entries: expected an array of entry names");
-    }
-    return new Set(entries.map(normalizeArchiveEntryName));
-  };
-  ipcMain.handle("list-zip-file", async (event, config) => {
-    const filePath = assertExistingArchiveFile(config, "zip file");
-    return new Promise((resolve, reject) => {
-      const names = [];
-      yauzl.open(
-        filePath,
-        { lazyEntries: true, autoClose: true },
-        (err, zipfile) => {
-          if (err) return reject(err);
-          zipfile.on("error", reject);
-          zipfile.on("entry", (entry) => {
-            if (!/[/\\]$/.test(entry.fileName)) {
-              const entryPath = normalizeArchiveEntryName(entry.fileName);
-              names.push({
-                entryPath,
-                size: entry.uncompressedSize ?? 0,
-                fileName: path.posix.basename(entryPath),
-              });
-            }
-            zipfile.readEntry();
-          });
-          zipfile.on("end", () => resolve(names));
-          zipfile.readEntry();
-        }
-      );
-    });
-  });
-  ipcMain.handle("unzip-file", async (event, config) => {
-    const filePath = assertExistingArchiveFile(config, "zip file");
-    const wanted = parseArchiveEntries(config && config.entries);
-    const baseDir = path.join(dirPath, "comic");
-    fs.mkdirSync(baseDir, { recursive: true });
-    return new Promise((resolve, reject) => {
-      const results = [];
-      const fail = (err) => reject(err);
-      yauzl.open(
-        filePath,
-        { lazyEntries: true, autoClose: true },
-        (err, zipfile) => {
-          if (err) return fail(err);
-          zipfile.on("error", fail);
-          zipfile.on("end", () => resolve(results));
-          const advance = () => zipfile.readEntry();
-          zipfile.on("entry", (entry) => {
-            const name = normalizeArchiveEntryName(entry.fileName);
-            const isDir = /[/\\]$/.test(entry.fileName);
-            const matches = !wanted || wanted.has(name);
-            if (isDir) {
-              if (matches) {
-                try {
-                  fs.mkdirSync(ensureEntryInside(baseDir, name), {
-                    recursive: true,
-                  });
-                } catch (e) {
-                  return fail(e);
-                }
-              }
-              advance();
-              return;
-            }
-            if (matches) {
-              zipfile.openReadStream(entry, (openErr, readStream) => {
-                if (openErr) return fail(openErr);
-                let dest;
-                try {
-                  dest = ensureEntryInside(baseDir, name);
-                  fs.mkdirSync(path.dirname(dest), { recursive: true });
-                } catch (e) {
-                  return fail(e);
-                }
-                const output = fs.createWriteStream(dest);
-                output.on("error", fail);
-                readStream.on("error", fail);
-                output.on("close", () => {
-                  results.push(dest);
-                  advance();
-                });
-                readStream.pipe(output);
-              });
-            } else {
-              advance();
-            }
-          });
-          zipfile.readEntry();
-        }
-      );
-    });
-  });
-  ipcMain.handle("list-tar-file", async (event, config) => {
-    const filePath = assertExistingArchiveFile(config, "tar file");
-    const index = await ensureTarIndex(filePath);
-    if (index.ok) return index.list;
-    return new Promise((resolve, reject) => {
-      const names = [];
-      const extract = tarStream.extract();
-      extract.on("error", reject);
-      extract.on("finish", () => resolve(names));
-      extract.on("entry", (header, stream, next) => {
-        if (header.type === "file") {
-          const entryPath = normalizeArchiveEntryName(header.name);
-          names.push({
-            entryPath,
-            size: header.size ?? 0,
-            fileName: path.posix.basename(entryPath),
-          });
-        }
-        stream.resume();
-        stream.on("end", next);
-      });
-      fs.createReadStream(filePath).on("error", reject).pipe(extract);
-    });
-  });
-  ipcMain.handle("untar-file", async (event, config) => {
-    const filePath = assertExistingArchiveFile(config, "tar file");
-    const wanted = parseArchiveEntries(config && config.entries);
-    const baseDir = path.join(dirPath, "comic");
-    fs.mkdirSync(baseDir, { recursive: true });
-    try {
-      const index = await ensureTarIndex(filePath);
-      if (index.ok) {
-        const extracted = await extractTarByOffsets(
-          filePath,
-          index,
-          wanted,
-          baseDir
+    };
+    const base = path.resolve(dataPath);
+    const assertInside = (p) => {
+      const resolved = path.resolve(p);
+      const rel = path.relative(base, resolved);
+      if (
+        rel.startsWith(".." + path.sep) ||
+        path.isAbsolute(rel) ||
+        rel.split(path.sep).includes("..")
+      ) {
+        throw new Error(
+          "Restore destination path is outside the data directory"
         );
-        if (extracted) return extracted;
       }
-    } catch (e) {
-      console.error("tar offset extract failed, fallback to stream:", e);
+      return resolved;
+    };
+    const ASSET_PREFIXES = [
+      "book/",
+      "cover/",
+      "dict/",
+      "background/",
+      "font/",
+      "snapshot/",
+    ];
+    const isConfigFile = (name) => {
+      if (!name.startsWith("config/")) return false;
+      const rest = name.slice("config/".length);
+      if (rest.includes("/")) return false;
+      return (
+        rest.endsWith(".db") || rest === "config.json" || rest === "sync.json"
+      );
+    };
+    const isAssetFile = (name) =>
+      ASSET_PREFIXES.some((prefix) => name.startsWith(prefix));
+    const isFileEntry = (entry) => !/\/$/.test(entry.fileName);
+
+    // 用 yauzl 回调式 API 遍历（其 eachEntry() 迭代器与 FdSlicer 的 ref/unref
+    // 时序存在冲突，遍历结束后 fd 会被提前关闭，故不使用 for await 形式）。
+    const scanEntries = () =>
+      new Promise((resolve, reject) => {
+        yauzl.fromFd(
+          fs.openSync(filePath, "r"),
+          { lazyEntries: true, autoClose: true },
+          (err, zf) => {
+            if (err) return reject(err);
+            let hasNewConfig = false;
+            let totalEntries = 0;
+            zf.on("entry", (entry) => {
+              if (entry.fileName === "config/config.json") hasNewConfig = true;
+              totalEntries++;
+              zf.readEntry();
+            });
+            zf.on("end", () => resolve({ hasNewConfig, totalEntries }));
+            zf.on("error", reject);
+            zf.readEntry();
+          }
+        );
+      });
+
+    let scanResult;
+    try {
+      scanResult = await scanEntries();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: message };
     }
-    return new Promise((resolve, reject) => {
-      const results = [];
-      let settled = false;
-      const fail = (err) => {
-        if (!settled) {
-          settled = true;
-          reject(err);
-        }
-      };
-      const extract = tarStream.extract();
-      extract.on("error", fail);
-      extract.on("finish", () => {
-        if (!settled) {
-          settled = true;
-          resolve(results);
-        }
-      });
-      extract.on("entry", (header, stream, next) => {
-        const name = normalizeArchiveEntryName(header.name);
-        const matches = !wanted || wanted.has(name);
-        if (header.type === "directory") {
-          if (matches) {
-            try {
-              fs.mkdirSync(ensureEntryInside(baseDir, name), {
-                recursive: true,
+    if (!scanResult.hasNewConfig) {
+      return { ok: false, isNewBackup: false };
+    }
+    const totalEntries = scanResult.totalEntries;
+
+    // 第二遍：逐条目 openReadStream 流式处理。
+    const configBuffers = [];
+    let processed = 0;
+    const processAllEntries = () =>
+      new Promise((resolve, reject) => {
+        yauzl.fromFd(
+          fs.openSync(filePath, "r"),
+          { lazyEntries: true, autoClose: true },
+          (err, zf) => {
+            if (err) return reject(err);
+            const advance = () => {
+              processed++;
+              sendProgress(
+                Math.round((processed / Math.max(totalEntries, 1)) * 100)
+              );
+              zf.readEntry();
+            };
+            zf.on("entry", (entry) => {
+              const name = entry.fileName;
+              if (!isFileEntry(entry)) {
+                // 目录条目：在主进程创建对应目录。若目标路径被一个异常空文件占住
+                // （历史残留），先删除该文件再建目录，避免后续写入 ENOENT。
+                if (isAssetFile(name) || name.startsWith("config/")) {
+                  let dirDest;
+                  try {
+                    dirDest = assertInside(
+                      path.join(dataPath, name.replace(/\/$/, ""))
+                    );
+                  } catch (e3) {
+                    return reject(e3);
+                  }
+                  try {
+                    if (
+                      fs.existsSync(dirDest) &&
+                      !fs.statSync(dirDest).isDirectory()
+                    ) {
+                      fs.unlinkSync(dirDest);
+                    }
+                    fs.mkdirSync(dirDest, { recursive: true });
+                  } catch (e3) {
+                    return reject(e3);
+                  }
+                }
+                advance();
+                return;
+              }
+              zf.openReadStream(entry, (e2, readStream) => {
+                if (e2) return reject(e2);
+                if (isAssetFile(name)) {
+                  // 流式写盘，不进内存
+                  let destination;
+                  try {
+                    destination = assertInside(path.join(dataPath, name));
+                  } catch (e3) {
+                    return reject(e3);
+                  }
+                  const directory = path.dirname(destination);
+                  try {
+                    if (
+                      fs.existsSync(directory) &&
+                      !fs.statSync(directory).isDirectory()
+                    ) {
+                      fs.unlinkSync(directory);
+                    }
+                    fs.mkdirSync(directory, { recursive: true });
+                  } catch (e3) {
+                    return reject(e3);
+                  }
+                  const output = fs.createWriteStream(destination);
+                  output.on("error", reject);
+                  readStream.on("error", reject);
+                  output.on("close", advance);
+                  readStream.pipe(output);
+                } else if (isConfigFile(name)) {
+                  // config 类文件（*.db / config.json / sync.json）累积为 Buffer
+                  // 回传渲染进程处理：.db 经 sql.js 解析合并，json 写入 ConfigService
+                  const chunks = [];
+                  readStream.on("data", (chunk) => chunks.push(chunk));
+                  readStream.on("error", reject);
+                  readStream.on("end", () => {
+                    const buf = Buffer.concat(chunks);
+                    configBuffers.push({
+                      name,
+                      buffer: buf.buffer.slice(
+                        buf.byteOffset,
+                        buf.byteOffset + buf.byteLength
+                      ),
+                    });
+                    advance();
+                  });
+                } else {
+                  readStream.resume();
+                  readStream.on("end", advance);
+                  readStream.on("error", reject);
+                }
               });
-            } catch (e) {
-              return fail(e);
-            }
+            });
+            zf.on("end", resolve);
+            zf.on("error", reject);
+            zf.readEntry();
           }
-          stream.resume();
-          stream.on("end", next);
-          return;
-        }
-        if (header.type === "file" && matches) {
-          let dest;
-          try {
-            dest = ensureEntryInside(baseDir, name);
-            fs.mkdirSync(path.dirname(dest), { recursive: true });
-          } catch (e) {
-            return fail(e);
-          }
-          const output = fs.createWriteStream(dest);
-          output.on("error", fail);
-          stream.on("error", fail);
-          output.on("close", () => {
-            results.push(dest);
-            next();
-          });
-          stream.pipe(output);
-          return;
-        }
-        stream.resume();
-        stream.on("end", next);
+        );
       });
-      fs.createReadStream(filePath).on("error", fail).pipe(extract);
-    });
+
+    try {
+      await processAllEntries();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("restore-path failed:", message);
+      return { ok: false, error: message };
+    }
+    sendProgress(100);
+    return {
+      ok: true,
+      isNewBackup: true,
+      configFiles: configBuffers,
+    };
   });
   ipcMain.handle("set-always-on-top", async (event, config) => {
     store.set("isAlwaysOnTop", config.isAlwaysOnTop);
@@ -1839,84 +2492,6 @@ const createMainWin = () => {
       event.returnvalue = false;
     }
   });
-  const getReaderWindowFromEvent = (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win || win.isDestroyed() || win === mainWin) return null;
-    return win;
-  };
-  // 无边框窗口收不到 DOM mouseleave，用轮询系统光标位置兜底
-  const mouseLeaveWatchers = new Map();
-  const stopMouseLeaveWatcher = (webContents) => {
-    const timer = mouseLeaveWatchers.get(webContents.id);
-    if (timer) {
-      clearInterval(timer);
-      mouseLeaveWatchers.delete(webContents.id);
-    }
-  };
-  const startMouseLeaveWatcher = (webContents) => {
-    stopMouseLeaveWatcher(webContents);
-    const timer = setInterval(() => {
-      if (webContents.isDestroyed()) {
-        stopMouseLeaveWatcher(webContents);
-        return;
-      }
-      const win =
-        BrowserWindow.fromWebContents(webContents) ||
-        (mainView && mainView.webContents === webContents ? mainWin : null);
-      if (!win || win.isDestroyed()) {
-        stopMouseLeaveWatcher(webContents);
-        return;
-      }
-      const cursor = screen.getCursorScreenPoint();
-      const bounds = win.getContentBounds();
-      const isInside =
-        cursor.x >= bounds.x &&
-        cursor.x < bounds.x + bounds.width &&
-        cursor.y >= bounds.y &&
-        cursor.y < bounds.y + bounds.height;
-      if (!isInside) {
-        stopMouseLeaveWatcher(webContents);
-        webContents.send("reader-mouse-leave");
-      }
-    }, 100);
-    mouseLeaveWatchers.set(webContents.id, timer);
-  };
-  ipcMain.on("reader-mouse-watch", (event, isWatching) => {
-    if (isWatching) {
-      startMouseLeaveWatcher(event.sender);
-    } else {
-      stopMouseLeaveWatcher(event.sender);
-    }
-  });
-  ipcMain.handle("reader-window-minimize", (event) => {
-    const win = getReaderWindowFromEvent(event);
-    if (!win) return false;
-    win.minimize();
-    return true;
-  });
-  ipcMain.handle("reader-window-toggle-maximize", (event) => {
-    const win = getReaderWindowFromEvent(event);
-    if (!win || win.isFullScreen()) return null;
-    if (win.isMaximized()) {
-      win.unmaximize();
-    } else {
-      win.maximize();
-    }
-    return win.isMaximized();
-  });
-  ipcMain.handle("reader-window-get-state", (event) => {
-    const win = getReaderWindowFromEvent(event);
-    return {
-      isMaximized: !!win && win.isMaximized(),
-      isFullScreen: !!win && win.isFullScreen(),
-    };
-  });
-  ipcMain.handle("reader-window-close", (event) => {
-    const win = getReaderWindowFromEvent(event);
-    if (!win) return false;
-    win.close();
-    return true;
-  });
   ipcMain.handle("open-console", (event, arg) => {
     mainWin.webContents.openDevTools();
     event.returnvalue = true;
@@ -1981,16 +2556,7 @@ const createMainWin = () => {
       mainWin.webContents.send("chat-message", msg);
     }
   });
-  ipcMain.handle("clear-all-data", async (event, config) => {
-    try {
-      if (fs.existsSync(path.join(dirPath, "tts"))) {
-        await fsExtra.remove(path.join(dirPath, "tts"));
-        await fsExtra.mkdir(path.join(dirPath, "tts"));
-      }
-      ttsCacheUtil.resetTTSAudioIndex(dirPath);
-    } catch (error) {
-      console.error(error);
-    }
+  ipcMain.handle("clear-all-data", (event, config) => {
     store.clear();
   });
   ipcMain.handle("new-tab", (event, config) => {
@@ -2022,10 +2588,15 @@ const createMainWin = () => {
     return new Promise((resolve) => {
       const doRemoveTab = () => {
         if (mainWin && mainView) {
-          mainWin.webContents.send("reading-finished", {});
           mainWin.contentView.removeChildView(mainView);
         }
-        clearDiscordActivity();
+        if (discordRPCClient) {
+          try {
+            discordRPCClient.clearActivity();
+          } catch (e) {
+            console.warn("Failed to clear Discord activity:", e.message);
+          }
+        }
         resolve(undefined);
       };
 
@@ -2071,11 +2642,6 @@ const createMainWin = () => {
       console.info("exit full");
     }
   });
-  ipcMain.handle("exit-reader", () => {
-    if (readerWindow && !readerWindow.isDestroyed()) {
-      readerWindow.close();
-    }
-  });
   ipcMain.handle("open-url", async (event, config) => {
     if (config.type === "dict") {
       if (!dictWindow || dictWindow.isDestroyed()) {
@@ -2108,27 +2674,28 @@ const createMainWin = () => {
     if (readerWindow && !readerWindow.isDestroyed()) {
       readerWindowReadyToClose = true;
       readerWindow.close();
-      const currentIsMergeWord = store.get("isMergeWord") === "yes";
-      const nextIsMergeWord = currentIsMergeWord ? "no" : "yes";
+      if (store.get("isMergeWord") === "yes") {
+        delete options.backgroundColor;
+      }
       const scaleRatio = store.get("windowDisplayScale") || 1;
       Object.assign(options, {
         width: parseInt(store.get("windowWidth") || 1050) / scaleRatio,
         height: parseInt(store.get("windowHeight") || 660) / scaleRatio,
         x: parseInt(store.get("windowX")),
         y: parseInt(store.get("windowY")),
-        ...getReaderWindowChromeOptions(),
-        hasShadow: nextIsMergeWord === "yes" ? false : true,
-        transparent: nextIsMergeWord === "yes" ? true : false,
-        backgroundColor:
-          nextIsMergeWord === "yes" ? undefined : getAppBackgroundColor(),
+        frame: store.get("isMergeWord") !== "yes" ? false : true,
+        hasShadow: store.get("isMergeWord") !== "yes" ? false : true,
+        transparent: store.get("isMergeWord") !== "yes" ? true : false,
       });
 
-      store.set("isMergeWord", nextIsMergeWord);
+      store.set(
+        "isMergeWord",
+        store.get("isMergeWord") !== "yes" ? "yes" : "no"
+      );
       if (readerWindow) {
         readerWindowList.push(readerWindow);
       }
       readerWindow = new BrowserWindow(options);
-      bindReaderWindowState(readerWindow);
       if (store.get("isAlwaysOnTop") === "yes") {
         readerWindow.setAlwaysOnTop(true);
       }
@@ -2183,7 +2750,13 @@ const createMainWin = () => {
         if (mainWin && !mainWin.isDestroyed()) {
           mainWin.webContents.send("reading-finished", {});
         }
-        clearDiscordActivity();
+        if (discordRPCClient) {
+          try {
+            discordRPCClient.clearActivity();
+          } catch (e) {
+            console.warn("Failed to clear Discord activity:", e.message);
+          }
+        }
       });
       // Renderer finished flushing reading-time data — proceed with actual close
       ipcMain.once("reader-close-ready", () => {
@@ -2324,7 +2897,6 @@ const applyCorsToRendererRequests = () => {
 app.on("ready", async () => {
   applyCorsToRendererRequests();
   await applyProxyToSession();
-  applyNativeThemeSource(store.get("appSkin"));
   createMainWin();
 });
 app.on("before-quit", () => {
@@ -2371,14 +2943,11 @@ console.info = function (...args) {
   originalConsoleInfo(...args); // 保留原信息日志
   log.info(args.map(serializeArg).join(" ")); // 写入信息日志文件
 };
-
 // Handle MacOS deep linking
 app.on("open-url", (event, url) => {
   event.preventDefault();
   handleCallback(url);
 });
-var lastDeepLinkUrl = null;
-var lastDeepLinkAt = 0;
 const handleCallback = (url) => {
   try {
     // 检查 URL 是否有效
@@ -2386,16 +2955,6 @@ const handleCallback = (url) => {
       console.error("Invalid URL format:", url);
       return;
     }
-
-    // 同一链接 5 秒内重复派发时忽略，避免确认框弹出两次
-    // （Windows 冷启动时 pendingDeepLink 与 second-instance 可能都到达）
-    const now = Date.now();
-    if (url === lastDeepLinkUrl && now - lastDeepLinkAt < 5000) {
-      console.info("Ignored duplicate deep link callback");
-      return;
-    }
-    lastDeepLinkUrl = url;
-    lastDeepLinkAt = now;
 
     // 解析 URL
     const parsedUrl = new URL(url);

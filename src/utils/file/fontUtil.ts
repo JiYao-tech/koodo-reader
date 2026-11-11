@@ -106,9 +106,7 @@ class FontUtil {
       const file = files.find((f) => f.startsWith(fontKey + "."));
       if (!file) return null;
       const buf: Buffer = fs.readFileSync(path.join(dir, file));
-      const arrayBuffer = new ArrayBuffer(buf.byteLength);
-      new Uint8Array(arrayBuffer).set(buf);
-      return arrayBuffer;
+      return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
     }
 
     if (ConfigService.getItem("isUseLocal") === "yes") {
@@ -253,7 +251,7 @@ class FontUtil {
     const response = await fetch(url, {
       headers: {
         "Cache-Control": "no-transform",
-        Range: "bytes=0-",
+        "Accept-Encoding": "identity",
       },
     });
     if (!response.ok) return false;
@@ -285,7 +283,7 @@ class FontUtil {
         chunks.push(value);
         received += value.length;
         if (contentLength > 0 && onProgress) {
-          onProgress(Math.min(received / contentLength, 1));
+          onProgress(received / contentLength);
         }
       }
     }

@@ -18,6 +18,8 @@ export type ShortcutAction =
   | "openToc"
   | "openLeftPanel"
   | "openRightPanel"
+  | "openTopPanel"
+  | "openBottomPanel"
   | "createBookmark"
   | "openBookmarkList"
   | "openNoteList"
@@ -44,6 +46,8 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   "openToc",
   "openLeftPanel",
   "openRightPanel",
+  "openTopPanel",
+  "openBottomPanel",
   "createBookmark",
   "openBookmarkList",
   "openNoteList",
@@ -173,6 +177,8 @@ export const DEFAULT_SHORTCUT_CONFIG: ShortcutConfig = {
   searchInBook: [{ keyCode: 70, ctrl: true }],
   openLeftPanel: [{ keyCode: 117 }],
   openRightPanel: [{ keyCode: 118 }],
+  openTopPanel: [{ keyCode: 119 }],
+  openBottomPanel: [{ keyCode: 120 }],
   createBookmark: [{ keyCode: 66, ctrl: true, shift: true }],
   openBookmarkList: [{ keyCode: 66, ctrl: true, alt: true }],
   prevChapter: [{ keyCode: 37, ctrl: true, alt: true }],
@@ -259,7 +265,7 @@ export const getShortcutConfig = (): ShortcutConfig => {
     const parsed = JSON.parse(stored) as Partial<ShortcutConfig>;
     const merged = cloneConfig(DEFAULT_SHORTCUT_CONFIG);
     SHORTCUT_ACTIONS.forEach((action) => {
-      if (Array.isArray(parsed[action])) {
+      if (Array.isArray(parsed[action]) && parsed[action]!.length > 0) {
         merged[action] = parsed[action]!.map((b) => ({ ...b }));
       }
     });

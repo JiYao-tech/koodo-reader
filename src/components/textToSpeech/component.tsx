@@ -1,5 +1,5 @@
-import { useTranslation } from "react-i18next";
-import { useEffect, useReducer, useRef, useState } from "react";
+import React from "react";
+import { TextToSpeechProps, TextToSpeechState } from "./interface";
 import { Trans } from "react-i18next";
 import { speedList } from "../../constants/dropdownList";
 import {
@@ -11,7 +11,6 @@ import {
   checkReachPageEnd,
   getAllVoices,
   getFormatFromAudioPath,
-  isReadingRawPDF,
   langToName,
   sleep,
   splitSentences,
@@ -19,322 +18,244 @@ import {
 import { isElectron } from "react-device-detect";
 import toast from "react-hot-toast";
 import TTSUtil from "../../utils/reader/ttsUtil";
-import { getTextRules } from "../../utils/common";
 import "./textToSpeech.css";
-import SwitchRow from "../readerSettings/switchRow";
 import { fetchUserInfo } from "../../utils/request/user";
 import { getSplitSentence } from "../../utils/request/reader";
 import { Howl } from "howler";
-import { useAppStore } from "../../store/useAppStore";
-
-export interface TextToSpeechState {
-  isAudioOn: boolean;
-  isPaused: boolean;
-  currentIndex: number;
-  voiceLocale: string;
-  languageList: string[];
-  voiceList: any;
-  multiRoleEnabled: boolean;
-  multiRoleVoiceType: string;
-  multiRoleNarratorVoice: string;
-  multiRoleMaleVoice: string;
-  multiRoleFemaleVoice: string;
-  multiRoleNarratorEngine: string;
-  multiRoleMaleEngine: string;
-  multiRoleFemaleEngine: string;
-  multiRoleChildVoice: string;
-  multiRoleChildEngine: string;
-}
-
 declare var window: any;
-const TextToSpeech = () => {
-  const currentBook = useAppStore((s) => s.book.currentBook);
-  const htmlBook = useAppStore((s) => s.reader.htmlBook);
-  const isReading = useAppStore((s) => s.book.isReading);
-  const plugins = useAppStore((s) => s.manager.plugins);
-  const readerMode = useAppStore((s) => s.reader.readerMode);
-  const isAuthed = useAppStore((s) => s.manager.isAuthed);
-  const speechStartText = useAppStore((s) => s.reader.speechStartText);
-  const isSpeechAutoStart = useAppStore((s) => s.reader.isSpeechAutoStart);
-  const handleSetting = useAppStore((s) => s.handleSetting);
-  const handleSettingMode = useAppStore((s) => s.handleSettingMode);
-  const handlePluginSettingTab = useAppStore((s) => s.handlePluginSettingTab);
-  const handleSpeechStartText = useAppStore((s) => s.handleSpeechStartText);
-  const handleSpeechAutoStart = useAppStore((s) => s.handleSpeechAutoStart);
-  const { t } = useTranslation();
-  const [state, setStateObj] = useState<TextToSpeechState>(() => ({
-    isAudioOn: false,
-    isPaused: false,
-    currentIndex: 0,
-    languageList: [],
-    voiceList: {},
-    voiceLocale:
-      ConfigService.getReaderConfig("voiceLocale") || navigator.language,
-    multiRoleEnabled: ConfigService.getAllListConfig(
-      "multiRoleVoiceBooks"
-    ).includes(currentBook?.key),
-    multiRoleVoiceType:
-      ConfigService.getReaderConfig("multiRoleVoiceType") || "system",
-    multiRoleNarratorVoice:
-      ConfigService.getReaderConfig("multiRoleNarratorVoice") ||
-      ConfigService.getReaderConfig("voiceName"),
-    multiRoleMaleVoice:
-      ConfigService.getReaderConfig("multiRoleMaleVoice") ||
-      ConfigService.getReaderConfig("voiceName"),
-    multiRoleFemaleVoice:
-      ConfigService.getReaderConfig("multiRoleFemaleVoice") ||
-      ConfigService.getReaderConfig("voiceName"),
-    multiRoleNarratorEngine:
-      ConfigService.getReaderConfig("multiRoleNarratorEngine") ||
-      ConfigService.getReaderConfig("voiceEngine"),
-    multiRoleMaleEngine:
-      ConfigService.getReaderConfig("multiRoleMaleEngine") ||
-      ConfigService.getReaderConfig("voiceEngine"),
-    multiRoleFemaleEngine:
-      ConfigService.getReaderConfig("multiRoleFemaleEngine") ||
-      ConfigService.getReaderConfig("voiceEngine"),
-    multiRoleChildVoice:
-      ConfigService.getReaderConfig("multiRoleChildVoice") ||
-      ConfigService.getReaderConfig("voiceName"),
-    multiRoleChildEngine:
-      ConfigService.getReaderConfig("multiRoleChildEngine") ||
-      ConfigService.getReaderConfig("voiceEngine"),
-  }));
-  const stateRef = useRef<TextToSpeechState>(state);
-  const setState = (
-    patch:
-      | Partial<TextToSpeechState>
-      | ((prev: TextToSpeechState) => Partial<TextToSpeechState>)
-  ) => {
-    const prev = stateRef.current;
-    const partial =
-      typeof patch === "function"
-        ? (patch as (prev: TextToSpeechState) => Partial<TextToSpeechState>)(
-            prev
-          )
-        : patch;
-    const next = { ...prev, ...partial };
-    stateRef.current = next;
-    setStateObj(next);
-  };
-  const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
-  const nodeListRef = useRef<
-    {
-      text: string;
-      voiceName: string;
-      voiceEngine: string;
-    }[]
-  >([]);
-  const customVoicesRef = useRef<any>([]);
-  const voicesRef = useRef<any>([]);
-  const nativeVoicesRef = useRef<any>([]);
-  const previewPlayerRef = useRef<Howl | null>(null);
-  const highlightUtilRef = useRef<any>(null);
-  if (!highlightUtilRef.current) {
-    highlightUtilRef.current = new HighlightUtil(ConfigService);
+class TextToSpeech extends React.Component<
+  TextToSpeechProps,
+  TextToSpeechState
+> {
+  nodeList: {
+    text: string;
+    voiceName: string;
+    voiceEngine: string;
+  }[];
+  customVoices: any;
+  voices: any;
+  nativeVoices: any;
+  previewPlayer: Howl | null;
+  highlightUtil: any;
+  constructor(props: TextToSpeechProps) {
+    super(props);
+    this.highlightUtil = new HighlightUtil(ConfigService);
+    this.state = {
+      isSupported: false,
+      isAudioOn: false,
+      isPaused: false,
+      currentIndex: 0,
+      languageList: [],
+      voiceList: {},
+      voiceLocale:
+        ConfigService.getReaderConfig("voiceLocale") || navigator.language,
+      multiRoleEnabled: ConfigService.getAllListConfig(
+        "multiRoleVoiceBooks"
+      ).includes(props.currentBook?.key),
+      multiRoleVoiceType:
+        ConfigService.getReaderConfig("multiRoleVoiceType") || "system",
+      multiRoleNarratorVoice:
+        ConfigService.getReaderConfig("multiRoleNarratorVoice") ||
+        ConfigService.getReaderConfig("voiceName"),
+      multiRoleMaleVoice:
+        ConfigService.getReaderConfig("multiRoleMaleVoice") ||
+        ConfigService.getReaderConfig("voiceName"),
+      multiRoleFemaleVoice:
+        ConfigService.getReaderConfig("multiRoleFemaleVoice") ||
+        ConfigService.getReaderConfig("voiceName"),
+      multiRoleNarratorEngine:
+        ConfigService.getReaderConfig("multiRoleNarratorEngine") ||
+        ConfigService.getReaderConfig("voiceEngine"),
+      multiRoleMaleEngine:
+        ConfigService.getReaderConfig("multiRoleMaleEngine") ||
+        ConfigService.getReaderConfig("voiceEngine"),
+      multiRoleFemaleEngine:
+        ConfigService.getReaderConfig("multiRoleFemaleEngine") ||
+        ConfigService.getReaderConfig("voiceEngine"),
+      multiRoleChildVoice:
+        ConfigService.getReaderConfig("multiRoleChildVoice") ||
+        ConfigService.getReaderConfig("voiceName"),
+      multiRoleChildEngine:
+        ConfigService.getReaderConfig("multiRoleChildEngine") ||
+        ConfigService.getReaderConfig("voiceEngine"),
+    };
+    this.nodeList = [];
+    this.voices = [];
+    this.customVoices = [];
+    this.nativeVoices = [];
+    this.previewPlayer = null;
   }
-  const speechIntervalRef = useRef<number | undefined>(undefined);
-  const prevPluginsRef = useRef(plugins);
-  const prevBookKeyRef = useRef(currentBook?.key);
-  const prevIsSpeechAutoStartRef = useRef(isSpeechAutoStart);
-
-  useEffect(() => {
-    let isMounted = true;
-    const init = async () => {
-      window.speechSynthesis && window.speechSynthesis.cancel();
-      setState({ isAudioOn: false });
-      nodeListRef.current = [];
-      const setSpeech = () => {
-        return new Promise<any[]>((resolve) => {
-          let synth = window.speechSynthesis;
-          if (synth) {
-            speechIntervalRef.current = window.setInterval(() => {
-              if (synth.getVoices().length !== 0) {
-                let voices = synth.getVoices();
-                resolve(
-                  voices.map((item: any) => {
-                    item.displayName = item.name;
-                    item.locale = item.lang;
-                    item.plugin = "system";
-                    return item;
-                  })
-                );
-                if (speechIntervalRef.current !== undefined) {
-                  clearInterval(speechIntervalRef.current);
-                  speechIntervalRef.current = undefined;
-                }
-              }
-            }, 10);
-          }
-        });
-      };
-      nativeVoicesRef.current = await setSpeech();
-      if (!isMounted) return;
-      if (isElectron) {
-        customVoicesRef.current = TTSUtil.getVoiceList(plugins);
-        voicesRef.current = [
-          ...nativeVoicesRef.current,
-          ...customVoicesRef.current,
-        ];
-      } else {
-        customVoicesRef.current = getAllVoices(
-          plugins.filter(
-            (item) => item.key === "official-ai-voice-plugin"
-          )
-        );
-        voicesRef.current = [
-          ...nativeVoicesRef.current,
-          ...customVoicesRef.current,
-        ];
-      }
-      handleVoiceLocaleList();
-      if (
-        voicesRef.current.length === 0 &&
-        getAllVoices(plugins).length === 0
-      ) {
-        return;
-      }
-      if (voicesRef.current.length > 0) {
-        let voiceName = ConfigService.getReaderConfig("voiceName");
-        let voiceEngine = ConfigService.getReaderConfig("voiceEngine");
-        let voiceIndex = parseInt(ConfigService.getReaderConfig("voiceIndex"));
-
-        if (
-          !voiceName &&
-          ConfigService.getReaderConfig("voiceIndex") &&
-          !isNaN(voiceIndex)
-        ) {
-          ConfigService.setReaderConfig(
-            "voiceName",
-            voicesRef.current[voiceIndex]
-              ? voicesRef.current[voiceIndex].name
-              : voicesRef.current[0].name
-          );
-        }
-        if (!voiceEngine && voiceName) {
-          let voice = voicesRef.current.find(
-            (item: any) => item.name === voiceName
-          );
-          if (voice && voice.plugin) {
-            ConfigService.setReaderConfig("voiceEngine", voice.plugin);
-          } else {
-            ConfigService.setReaderConfig("voiceEngine", "system");
-          }
-        }
-        if (!voiceName && !voiceEngine && voicesRef.current.length > 0) {
-          let defaultVoice =
-            voicesRef.current.find(
-              (item: any) => item.plugin !== "official-ai-voice-plugin"
-            ) || voicesRef.current[0];
-          ConfigService.setReaderConfig("voiceName", defaultVoice.name);
-          ConfigService.setReaderConfig(
-            "voiceEngine",
-            defaultVoice.plugin || "system"
-          );
-        }
-      }
-    };
-    init();
-    return () => {
-      isMounted = false;
-      if (speechIntervalRef.current !== undefined) {
-        clearInterval(speechIntervalRef.current);
-        speechIntervalRef.current = undefined;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    //plugin更新后重新获取语音列表
-    if (prevPluginsRef.current !== plugins) {
-      prevPluginsRef.current = plugins;
-      customVoicesRef.current = TTSUtil.getVoiceList(plugins);
-      voicesRef.current = [
-        ...nativeVoicesRef.current,
-        ...customVoicesRef.current,
-      ];
-      handleVoiceLocaleList();
+  async componentDidMount() {
+    if ("speechSynthesis" in window) {
+      this.setState({ isSupported: true });
     }
-  }, [plugins]);
+    window.speechSynthesis && window.speechSynthesis.cancel();
+    this.setState({ isAudioOn: false });
+    this.nodeList = [];
+    const setSpeech = () => {
+      return new Promise((resolve) => {
+        let synth = window.speechSynthesis;
+        let id;
+        if (synth) {
+          id = setInterval(() => {
+            if (synth.getVoices().length !== 0) {
+              let voices = synth.getVoices();
+              resolve(
+                voices.map((item) => {
+                  item.displayName = item.name;
+                  item.locale = item.lang;
+                  item.plugin = "system";
+                  return item;
+                })
+              );
+              clearInterval(id);
+            } else {
+              this.setState({ isSupported: false });
+            }
+          }, 10);
+        }
+      });
+    };
+    this.nativeVoices = await setSpeech();
+    if (isElectron) {
+      this.customVoices = TTSUtil.getVoiceList(this.props.plugins);
+      this.voices = [...this.nativeVoices, ...this.customVoices];
+    } else {
+      this.customVoices = getAllVoices(
+        this.props.plugins.filter(
+          (item) => item.key === "official-ai-voice-plugin"
+        )
+      );
+      this.voices = [...this.nativeVoices, ...this.customVoices];
+    }
+    this.handleVoiceLocaleList();
+    if (
+      this.voices.length === 0 &&
+      getAllVoices(this.props.plugins).length === 0
+    ) {
+      return;
+    }
+    if (this.voices.length > 0) {
+      let voiceName = ConfigService.getReaderConfig("voiceName");
+      let voiceEngine = ConfigService.getReaderConfig("voiceEngine");
+      let voiceIndex = parseInt(ConfigService.getReaderConfig("voiceIndex"));
 
-  useEffect(() => {
-    if (prevBookKeyRef.current !== currentBook?.key) {
-      prevBookKeyRef.current = currentBook?.key;
-      setState({
+      if (
+        !voiceName &&
+        ConfigService.getReaderConfig("voiceIndex") &&
+        !isNaN(voiceIndex)
+      ) {
+        ConfigService.setReaderConfig(
+          "voiceName",
+          this.voices[voiceIndex]
+            ? this.voices[voiceIndex].name
+            : this.voices[0].name
+        );
+      }
+      if (!voiceEngine && voiceName) {
+        let voice = this.voices.find((item) => item.name === voiceName);
+        if (voice && voice.plugin) {
+          ConfigService.setReaderConfig("voiceEngine", voice.plugin);
+        } else {
+          ConfigService.setReaderConfig("voiceEngine", "system");
+        }
+      }
+      if (!voiceName && !voiceEngine && this.voices.length > 0) {
+        let defaultVoice =
+          this.voices.find(
+            (item) => item.plugin !== "official-ai-voice-plugin"
+          ) || this.voices[0];
+        ConfigService.setReaderConfig("voiceName", defaultVoice.name);
+        ConfigService.setReaderConfig(
+          "voiceEngine",
+          defaultVoice.plugin || "system"
+        );
+      }
+    }
+  }
+  UNSAFE_componentWillReceiveProps(
+    nextProps: Readonly<TextToSpeechProps>,
+    nextContext: any
+  ): void {
+    //plugin更新后重新获取语音列表
+    if (nextProps.plugins !== this.props.plugins) {
+      this.customVoices = TTSUtil.getVoiceList(nextProps.plugins);
+      this.voices = [...this.nativeVoices, ...this.customVoices];
+      this.handleVoiceLocaleList();
+    }
+    if (nextProps.currentBook?.key !== this.props.currentBook?.key) {
+      this.setState({
         multiRoleEnabled: ConfigService.getAllListConfig(
           "multiRoleVoiceBooks"
-        ).includes(currentBook?.key),
+        ).includes(nextProps.currentBook?.key),
       });
     }
-  }, [currentBook?.key]);
-
-  useEffect(() => {
-    if (isSpeechAutoStart && !prevIsSpeechAutoStartRef.current) {
-      handleSpeechAutoStartRequest();
+  }
+  componentWillUnmount() {
+    this.stopPreviewAudio();
+  }
+  componentDidUpdate(prevProps: Readonly<TextToSpeechProps>) {
+    if (this.props.isSpeechAutoStart && !prevProps.isSpeechAutoStart) {
+      this.handleSpeechAutoStartRequest();
     }
-    prevIsSpeechAutoStartRef.current = isSpeechAutoStart;
-  }, [isSpeechAutoStart]);
-
-  useEffect(() => {
-    return () => {
-      stopPreviewAudio();
-    };
-  }, []);
-  const clearSpeechStartState = () => {
-    if (speechStartText) {
-      handleSpeechStartText("");
+  }
+  clearSpeechStartState = () => {
+    if (this.props.speechStartText) {
+      this.props.handleSpeechStartText("");
     }
-    if (isSpeechAutoStart) {
-      handleSpeechAutoStart(false);
+    if (this.props.isSpeechAutoStart) {
+      this.props.handleSpeechAutoStart(false);
     }
   };
-  const getSpeechStartIndex = (nodeTextList: string[]) => {
+  getSpeechStartIndex = (nodeTextList: string[]) => {
+    const speechStartText = this.props.speechStartText;
+
     if (!speechStartText) return -1;
 
     return nodeTextList.findIndex((item) => {
       return item.includes(speechStartText) || speechStartText.includes(item);
     });
   };
-  const handleSpeechAutoStartRequest = async () => {
-    if (stateRef.current.isAudioOn) {
-      await handleStop();
+  handleSpeechAutoStartRequest = async () => {
+    if (this.state.isAudioOn) {
+      await this.handleStop();
     }
-    handleStartAudio();
+    this.handleStartAudio();
   };
-  const handleMultiRoleToggle = (enabled: boolean) => {
+  handleMultiRoleToggle = (enabled: boolean) => {
     if (enabled) {
-      if (!isAuthed) {
-        toast(t("Please upgrade to Pro to use this feature"));
-        handleSetting(true);
-        handleSettingMode("account");
+      if (!this.props.isAuthed) {
+        toast(this.props.t("Please upgrade to Pro to use this feature"));
+        this.props.handleSetting(true);
+        this.props.handleSettingMode("account");
         return;
       }
       ConfigService.setListConfig(
-        currentBook.key,
+        this.props.currentBook.key,
         "multiRoleVoiceBooks"
       );
     } else {
       ConfigService.deleteListConfig(
-        currentBook.key,
+        this.props.currentBook.key,
         "multiRoleVoiceBooks"
       );
     }
-    setState({ multiRoleEnabled: enabled });
+    this.setState({ multiRoleEnabled: enabled });
   };
-  const stopPreviewAudio = () => {
+  stopPreviewAudio = () => {
     window.speechSynthesis && window.speechSynthesis.cancel();
-    if (previewPlayerRef.current) {
-      previewPlayerRef.current.stop();
-      previewPlayerRef.current.unload();
-      previewPlayerRef.current = null;
+    if (this.previewPlayer) {
+      this.previewPlayer.stop();
+      this.previewPlayer.unload();
+      this.previewPlayer = null;
     }
   };
-  const getPreviewText = (voice: any) => {
+  getPreviewText = (voice: any) => {
     const voiceCode =
       voice?.locale ||
       voice?.lang ||
       voice?.language ||
-      stateRef.current.voiceLocale ||
+      this.state.voiceLocale ||
       navigator.language ||
       "en";
     const normalizedCode = voiceCode.toLowerCase().split("-")[0];
@@ -343,59 +264,59 @@ const TextToSpeech = () => {
       KookitConfig.SpeechList[0];
     return speech.example;
   };
-  const getVoiceByNameAndEngine = (voiceName: string, voiceEngine: string) => {
-    return voicesRef.current.find(
+  getVoiceByNameAndEngine = (voiceName: string, voiceEngine: string) => {
+    return this.voices.find(
       (item: any) => item.name === voiceName && item.plugin === voiceEngine
     );
   };
-  const handlePreviewVoice = async (voiceName: string, voiceEngine: string) => {
+  handlePreviewVoice = async (voiceName: string, voiceEngine: string) => {
     if (!voiceName) {
-      toast(t("Please select"));
+      toast(this.props.t("Please select"));
       return;
     }
     const engine = voiceEngine || "system";
-    const voice = getVoiceByNameAndEngine(voiceName, engine);
+    const voice = this.getVoiceByNameAndEngine(voiceName, engine);
     if (!voice) {
-      toast.error(t("Audio loading failed, stopped playback"));
+      toast.error(this.props.t("Audio loading failed, stopped playback"));
       return;
     }
-    const previewText = getPreviewText(voice);
+    const previewText = this.getPreviewText(voice);
     const speed = parseFloat(ConfigService.getReaderConfig("voiceSpeed")) || 1;
 
-    stopPreviewAudio();
+    this.stopPreviewAudio();
 
     if (engine === "system") {
       const msg = new SpeechSynthesisUtterance();
       msg.text = previewText;
       msg.voice =
-        nativeVoicesRef.current.find((item: any) => item.name === voiceName) ||
-        nativeVoicesRef.current[0];
+        this.nativeVoices.find((item: any) => item.name === voiceName) ||
+        this.nativeVoices[0];
       msg.rate = speed;
       msg.onerror = () => {
-        toast.error(t("Audio loading failed, stopped playback"));
+        toast.error(this.props.t("Audio loading failed, stopped playback"));
       };
       window.speechSynthesis && window.speechSynthesis.speak(msg);
       return;
     }
 
     if (engine === "official-ai-voice-plugin") {
-      if (!isAuthed) {
-        toast(t("Please upgrade to Pro to use this feature"));
+      if (!this.props.isAuthed) {
+        toast(this.props.t("Please upgrade to Pro to use this feature"));
         return;
       }
       await fetchUserInfo();
     }
 
-    const plugin = plugins.find((item) => item.key === engine);
+    const plugin = this.props.plugins.find((item) => item.key === engine);
     if (!plugin) {
-      toast.error(t("Audio loading failed, stopped playback"));
+      toast.error(this.props.t("Audio loading failed, stopped playback"));
       return;
     }
     const pluginVoice = (plugin.voiceList as any[]).find(
       (item) => item.name === voiceName
     );
     if (!pluginVoice) {
-      toast.error(t("Audio loading failed, stopped playback"));
+      toast.error(this.props.t("Audio loading failed, stopped playback"));
       return;
     }
     const audioPath = await TTSUtil.getAudioPath(
@@ -407,19 +328,19 @@ const TextToSpeech = () => {
       true
     );
     if (!audioPath) {
-      toast.error(t("Audio loading failed, stopped playback"));
+      toast.error(this.props.t("Audio loading failed, stopped playback"));
       return;
     }
-    previewPlayerRef.current = new Howl({
+    this.previewPlayer = new Howl({
       src: [audioPath],
       format: [getFormatFromAudioPath(audioPath)],
       onloaderror: () => {
-        toast.error(t("Audio loading failed, stopped playback"));
+        toast.error(this.props.t("Audio loading failed, stopped playback"));
       },
     });
-    previewPlayerRef.current.play();
+    this.previewPlayer.play();
   };
-  const renderVoicePreviewLabel = (
+  renderVoicePreviewLabel = (
     label: string,
     voiceName: string,
     voiceEngine: string
@@ -429,8 +350,8 @@ const TextToSpeech = () => {
         <Trans>{label}</Trans>
         <span
           className="tts-preview-btn"
-          title={t("Test")}
-          onClick={() => handlePreviewVoice(voiceName, voiceEngine)}
+          title={this.props.t("Test")}
+          onClick={() => this.handlePreviewVoice(voiceName, voiceEngine)}
         >
           <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
             <path d="M3 10v4h3l4 4V6L6 10H3zm11.5 2a3.5 3.5 0 0 0-2-3.15v6.29A3.5 3.5 0 0 0 14.5 12zm0-7.5v2.06A7.003 7.003 0 0 1 19 12a7.003 7.003 0 0 1-4.5 5.44v2.06c3.45-.9 6-4.03 6-7.5s-2.55-6.6-6-7.5z" />
@@ -440,9 +361,9 @@ const TextToSpeech = () => {
     );
   };
 
-  const getVoicesByType = (voiceType: string) => {
-    const locale = stateRef.current.voiceLocale;
-    const voiceList = stateRef.current.voiceList[locale] || voicesRef.current;
+  getVoicesByType = (voiceType: string) => {
+    const locale = this.state.voiceLocale;
+    const voiceList = this.state.voiceList[locale] || this.voices;
 
     if (voiceType === "system") {
       return voiceList.filter((item: any) => item.plugin === "system");
@@ -460,12 +381,12 @@ const TextToSpeech = () => {
     }
     return voiceList;
   };
-  const handleStartAudio = async () => {
+  handleStartAudio = async () => {
     if (
-      isAuthed &&
+      this.props.isAuthed &&
       ConfigService.getReaderConfig("voiceEngine") !== "system"
     ) {
-      toast.loading(t("Loading audio, please wait..."), {
+      toast.loading(this.props.t("Loading audio, please wait..."), {
         id: "tts-load",
       });
       await fetchUserInfo();
@@ -473,15 +394,13 @@ const TextToSpeech = () => {
     if (
       ConfigService.getReaderConfig("voiceEngine") ===
         "official-ai-voice-plugin" &&
-      !isAuthed
+      !this.props.isAuthed
     ) {
       ConfigService.setReaderConfig("voiceEngine", "system");
     }
-    // 每次开始朗读前刷新文本规则（replace / delete）
-    TTSUtil.setTextRules(getTextRules(currentBook?.key));
-    handleStartSpeech();
+    this.handleStartSpeech();
   };
-  const handlePauseAudio = async () => {
+  handlePauseAudio = async () => {
     if (window.speechSynthesis) {
       if (window.speechSynthesis.speaking) {
         // 在句子中途暂停，保留 utterance 状态以便从暂停位置恢复
@@ -491,79 +410,83 @@ const TextToSpeech = () => {
       }
     }
     await TTSUtil.pauseAudio();
-    setState({ isPaused: true });
+    this.setState({ isPaused: true });
   };
-  const handleStop = async () => {
+  handleStop = async () => {
     window.speechSynthesis && window.speechSynthesis.cancel();
     await TTSUtil.stopAudio();
-    setState({ isAudioOn: false, isPaused: false, currentIndex: 0 });
-    nodeListRef.current = [];
+    this.setState({ isAudioOn: false, isPaused: false, currentIndex: 0 });
+    this.nodeList = [];
   };
-  const handlePauseResume = () => {
-    const currentNode = nodeListRef.current[stateRef.current.currentIndex];
+  handlePauseResume = () => {
+    const currentNode = this.nodeList[this.state.currentIndex];
     if (!currentNode) return;
 
-    setState({ isPaused: false });
-    if (currentNode.voiceEngine !== "system") {
-      // 尝试从自定义音频暂停位置恢复，失败则从句首重新播放
-      const resumed = TTSUtil.resumeAudio();
-      if (!resumed) {
-        handleCustomRead(stateRef.current.currentIndex);
-      }
-    } else {
-      // 若 Web Speech API 处于暂停状态则从暂停位置恢复，否则从句首重新朗读
-      if (window.speechSynthesis && window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
+    this.setState({ isPaused: false }, () => {
+      if (currentNode.voiceEngine !== "system") {
+        // 尝试从自定义音频暂停位置恢复，失败则从句首重新播放
+        const resumed = TTSUtil.resumeAudio();
+        if (!resumed) {
+          this.handleCustomRead(this.state.currentIndex);
+        }
       } else {
-        handleSystemRead(stateRef.current.currentIndex);
+        // 若 Web Speech API 处于暂停状态则从暂停位置恢复，否则从句首重新朗读
+        if (window.speechSynthesis && window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        } else {
+          this.handleSystemRead(this.state.currentIndex);
+        }
       }
-    }
+    });
   };
-  const handlePrevSentence = async () => {
-    if (!stateRef.current.isAudioOn || nodeListRef.current.length === 0) return;
-    let prevIndex = Math.max(0, stateRef.current.currentIndex - 1);
+  handlePrevSentence = async () => {
+    if (!this.state.isAudioOn || this.nodeList.length === 0) return;
+    let prevIndex = Math.max(0, this.state.currentIndex - 1);
     window.speechSynthesis && window.speechSynthesis.cancel();
     await TTSUtil.pauseAudio();
     TTSUtil.pausedMidSentence = false; // 跳转句子时不从暂停位置恢复
-    setState({ currentIndex: prevIndex, isPaused: false });
-    if (nodeListRef.current[prevIndex].voiceEngine !== "system") {
-      handleCustomRead(prevIndex);
-    } else {
-      handleSystemRead(prevIndex);
-    }
+    this.setState({ currentIndex: prevIndex, isPaused: false }, () => {
+      if (this.nodeList[prevIndex].voiceEngine !== "system") {
+        this.handleCustomRead(prevIndex);
+      } else {
+        this.handleSystemRead(prevIndex);
+      }
+    });
   };
-  const handleNextSentence = async () => {
-    if (!stateRef.current.isAudioOn || nodeListRef.current.length === 0) return;
-    let nextIndex = stateRef.current.currentIndex + 1;
+  handleNextSentence = async () => {
+    if (!this.state.isAudioOn || this.nodeList.length === 0) return;
+    let nextIndex = this.state.currentIndex + 1;
     window.speechSynthesis && window.speechSynthesis.cancel();
     await TTSUtil.pauseAudio();
     TTSUtil.pausedMidSentence = false; // 跳转句子时不从暂停位置恢复
-    if (nextIndex >= nodeListRef.current.length) {
+    if (nextIndex >= this.nodeList.length) {
       // Move to next page
-      setState({ currentIndex: 0, isPaused: false });
-      nodeListRef.current = [];
-      await handleAudio();
+      this.setState({ currentIndex: 0, isPaused: false }, async () => {
+        this.nodeList = [];
+        await this.handleAudio();
+      });
     } else {
-      setState({ currentIndex: nextIndex, isPaused: false });
-      if (nodeListRef.current[nextIndex].voiceEngine !== "system") {
-        handleCustomRead(nextIndex);
-      } else {
-        handleSystemRead(nextIndex);
-      }
+      this.setState({ currentIndex: nextIndex, isPaused: false }, () => {
+        if (this.nodeList[nextIndex].voiceEngine !== "system") {
+          this.handleCustomRead(nextIndex);
+        } else {
+          this.handleSystemRead(nextIndex);
+        }
+      });
     }
   };
-  const handleVoiceSwitch = async (
+  handleVoiceSwitch = async (
     newVoiceName: string,
     newVoiceEngine: string,
-    _previousEngine: string
+    previousEngine: string
   ) => {
-    if (!stateRef.current.isAudioOn || nodeListRef.current.length === 0) return;
+    if (!this.state.isAudioOn || this.nodeList.length === 0) return;
 
-    const currentIndex = stateRef.current.currentIndex;
+    const currentIndex = this.state.currentIndex;
 
     // 鉴权检查（AI 语音）
-    if (newVoiceEngine === "official-ai-voice-plugin" && !isAuthed) {
-      toast(t("Please upgrade to Pro to use this feature"));
+    if (newVoiceEngine === "official-ai-voice-plugin" && !this.props.isAuthed) {
+      toast(this.props.t("Please upgrade to Pro to use this feature"));
       return;
     }
 
@@ -578,20 +501,24 @@ const TextToSpeech = () => {
     TTSUtil.isPaused = true;
     TTSUtil.pausedMidSentence = false;
 
-    // 重置内存中的音频路径缓存（适用于所有引擎切换；磁盘 tts 缓存按内容哈希命名，切换语音无需清除）
+    // 若之前是 AI 语音，清除已生成的音频文件
+    if (previousEngine === "official-ai-voice-plugin") {
+      await TTSUtil.clearAudioPaths();
+    }
+    // 重置内存中的音频路径缓存（适用于所有引擎切换）
     TTSUtil.setAudioPaths();
 
     // AI 语音需要刷新用户信息
-    if (isAuthed && newVoiceEngine !== "system") {
-      toast.loading(t("Loading audio, please wait..."), {
+    if (this.props.isAuthed && newVoiceEngine !== "system") {
+      toast.loading(this.props.t("Loading audio, please wait..."), {
         id: "tts-load",
       });
       await fetchUserInfo();
     }
 
     // 非多角色模式下，将 nodeList 所有节点更新为新语音
-    if (!stateRef.current.multiRoleEnabled) {
-      nodeListRef.current = nodeListRef.current.map((node) => ({
+    if (!this.state.multiRoleEnabled) {
+      this.nodeList = this.nodeList.map((node) => ({
         ...node,
         voiceName: newVoiceName,
         voiceEngine: newVoiceEngine,
@@ -599,39 +526,42 @@ const TextToSpeech = () => {
     }
 
     // 先将 isPaused 置 true 终止旧循环，再置 false 从当前句子重新播放
-    setState({ isPaused: true });
-    setState({ isPaused: false });
-    if (newVoiceEngine !== "system") {
-      handleCustomRead(currentIndex);
-    } else {
-      handleSystemRead(currentIndex);
-    }
+    this.setState({ isPaused: true }, () => {
+      this.setState({ isPaused: false }, () => {
+        if (newVoiceEngine !== "system") {
+          this.handleCustomRead(currentIndex);
+        } else {
+          this.handleSystemRead(currentIndex);
+        }
+      });
+    });
   };
-  const handleStartSpeech = () => {
-    setState({ isAudioOn: true, isPaused: false, currentIndex: 0 });
-    handleAudio();
+  handleStartSpeech = () => {
+    this.setState({ isAudioOn: true, isPaused: false, currentIndex: 0 }, () => {
+      this.handleAudio();
+    });
   };
-  const handleAudio = async () => {
-    nodeListRef.current = await handleGetText();
-    if (nodeListRef.current.length === 0) {
+  handleAudio = async () => {
+    this.nodeList = await this.handleGetText();
+    if (this.nodeList.length === 0) {
       return;
     }
-    if (nodeListRef.current[0].voiceEngine !== "system") {
-      toast.loading(t("Loading audio, please wait..."), {
+    if (this.nodeList[0].voiceEngine !== "system") {
+      toast.loading(this.props.t("Loading audio, please wait..."), {
         id: "tts-load",
       });
 
-      await handleCustomRead(0);
+      await this.handleCustomRead(0);
     } else {
-      await handleSystemRead(0);
+      await this.handleSystemRead(0);
     }
   };
-  const handleGetText = async () => {
+  handleGetText = async () => {
     if ((ConfigService.getReaderConfig("animation") || "none") !== "none") {
       await sleep(1000);
     }
     let nodeList = [];
-    let nodeTextList = (await htmlBook.rendition.audioText()).filter(
+    let nodeTextList = (await this.props.htmlBook.rendition.audioText()).filter(
       (item: string) => item && item.trim()
     );
     let rawNodeList: string[][] = [];
@@ -642,12 +572,12 @@ const TextToSpeech = () => {
 
     nodeTextList = rawNodeList.flat();
 
-    const speechStartIndex = getSpeechStartIndex(nodeTextList);
+    const speechStartIndex = this.getSpeechStartIndex(nodeTextList);
     if (speechStartIndex > -1) {
       nodeTextList = nodeTextList.slice(speechStartIndex);
     }
-    clearSpeechStartState();
-    if (!stateRef.current.multiRoleEnabled || !isAuthed) {
+    this.clearSpeechStartState();
+    if (!this.state.multiRoleEnabled || !this.props.isAuthed) {
       nodeList = nodeTextList.map((text: string) => {
         return {
           text,
@@ -656,56 +586,14 @@ const TextToSpeech = () => {
         };
       });
     } else {
-      // 多角色朗读的所有角色统一使用 multiRoleVoiceType 约束的引擎类型，
-      // 并校验 voice/engine 组合在声音列表中真实存在（自动修复遗留的混合组合）
-      const voiceType =
-        ConfigService.getReaderConfig("multiRoleVoiceType") || "";
-      const resolveVoice = (voiceName: string, voiceEngine: string) => {
-        if (!voiceName) return null;
-        const matched =
-          getVoiceByNameAndEngine(voiceName, voiceEngine) ||
-          voicesRef.current.find((item: any) => item.name === voiceName);
-        if (!matched) return null;
-        const matchedEngine = matched.plugin || "system";
-        if (
-          voiceType === "" ||
-          (voiceType === "custom"
-            ? matchedEngine !== "system" &&
-              matchedEngine !== "official-ai-voice-plugin"
-            : matchedEngine === voiceType)
-        ) {
-          return { voiceName, voiceEngine: matchedEngine };
-        }
-        return null;
-      };
-      const globalVoice = resolveVoice(
-        ConfigService.getReaderConfig("voiceName"),
-        ConfigService.getReaderConfig("voiceEngine") || "system"
-      );
-      const narratorVoiceInfo =
-        resolveVoice(
-          stateRef.current.multiRoleNarratorVoice,
-          stateRef.current.multiRoleNarratorEngine || "system"
-        ) || globalVoice;
-      if (voiceType !== "" && voiceType !== "system" && !narratorVoiceInfo) {
-        // AI/自定义类型下没有任何可用声音时，回退到全局单语音朗读
-        nodeList = nodeTextList.map((text: string) => {
-          return {
-            text,
-            voiceName: ConfigService.getReaderConfig("voiceName"),
-            voiceEngine: ConfigService.getReaderConfig("voiceEngine"),
-          };
-        });
-        return nodeList;
-      }
-      toast.loading(t("Analyzing roles, please wait..."), {
+      toast.loading(this.props.t("Analyzing roles, please wait..."), {
         id: "tts-load",
       });
       if (nodeTextList.join("").length > 50000) {
-        toast.error(t("The text is too long to analyze"), {
+        toast.error(this.props.t("The text is too long to analyze"), {
           id: "tts-load",
         });
-        setState({ isAudioOn: false });
+        this.setState({ isAudioOn: false });
         return [];
       }
       let splitTextList = rawNodeList.flatMap((texts, index) =>
@@ -714,119 +602,120 @@ const TextToSpeech = () => {
       let res = await getSplitSentence(splitTextList);
       toast.dismiss("tts-load");
 
-      const narratorVoice = narratorVoiceInfo || {
-        voiceName: "",
-        voiceEngine: "system",
-      };
-      const maleVoice =
-        resolveVoice(
-          stateRef.current.multiRoleMaleVoice,
-          stateRef.current.multiRoleMaleEngine || "system"
-        ) || narratorVoice;
-      const femaleVoice =
-        resolveVoice(
-          stateRef.current.multiRoleFemaleVoice,
-          stateRef.current.multiRoleFemaleEngine || "system"
-        ) || narratorVoice;
-      const childVoice =
-        resolveVoice(
-          stateRef.current.multiRoleChildVoice,
-          stateRef.current.multiRoleChildEngine || "system"
-        ) || narratorVoice;
+      let narratorVoice = this.state.multiRoleNarratorVoice;
+      let narratorEngine = this.state.multiRoleNarratorEngine;
+      let maleVoice = this.state.multiRoleMaleVoice;
+      let maleEngine = this.state.multiRoleMaleEngine;
+      let femaleVoice = this.state.multiRoleFemaleVoice;
+      let femaleEngine = this.state.multiRoleFemaleEngine;
+      let childVoice = this.state.multiRoleChildVoice;
+      let childEngine = this.state.multiRoleChildEngine;
       if (res && res.data && res.data.sentences) {
         nodeList = res.data.sentences.map((item: any) => {
-          let voice = narratorVoice;
+          let voiceName = narratorVoice;
+          let voiceEngine = narratorEngine;
           if (item.role === "male") {
-            voice = maleVoice;
+            voiceName = maleVoice || narratorVoice;
+            voiceEngine = maleEngine || narratorEngine;
           } else if (item.role === "female") {
-            voice = femaleVoice;
+            voiceName = femaleVoice || narratorVoice;
+            voiceEngine = femaleEngine || narratorEngine;
           } else if (item.role === "child") {
-            voice = childVoice;
+            voiceName = childVoice || narratorVoice;
+            voiceEngine = childEngine || narratorEngine;
           }
           return {
             text: item.text,
-            voiceName: voice.voiceName,
-            voiceEngine: voice.voiceEngine,
+            voiceName,
+            voiceEngine,
           };
         });
       } else {
-        toast.error(t("Analysis failed"));
-        setState({ isAudioOn: false });
+        toast.error(this.props.t("Analysis failed"));
+        this.setState({ isAudioOn: false });
         return [];
       }
     }
 
     if (nodeList.length === 0) {
-      if (isReadingRawPDF(currentBook)) {
-        let currentPosition = htmlBook.rendition.getPosition();
-        await htmlBook.rendition.goToChapterIndex(
+      if (
+        this.props.currentBook.format === "PDF" &&
+        !ConfigService.getAllListConfig("convertPDFBooks").includes(
+          this.props.currentBook.key
+        )
+      ) {
+        let currentPosition = this.props.htmlBook.rendition.getPosition();
+        await this.props.htmlBook.rendition.goToChapterIndex(
           parseInt(currentPosition.chapterDocIndex) +
-            (readerMode === "double" ? 2 : 1)
+            (this.props.readerMode === "double" ? 2 : 1)
         );
       } else {
-        await htmlBook.rendition.next();
+        await this.props.htmlBook.rendition.next();
       }
 
-      nodeList = await handleGetText();
+      nodeList = await this.handleGetText();
     }
     return nodeList;
   };
-  const handleCustomRead = async (nodeIndex: number) => {
+  async handleCustomRead(nodeIndex: number) {
     let speed = parseFloat(ConfigService.getReaderConfig("voiceSpeed")) || 1;
-    if (!stateRef.current.isAudioOn) {
+    if (!this.state.isAudioOn) {
       TTSUtil.setAudioPaths();
     }
 
-    for (let index = nodeIndex; index < nodeListRef.current.length; index++) {
-      if (stateRef.current.isPaused || !stateRef.current.isAudioOn) return;
-      setState({ currentIndex: index });
-      let node = nodeListRef.current[index];
-      let style = highlightUtilRef.current.buildTtsHighlightStyle(
-        isReadingRawPDF(currentBook),
+    for (let index = nodeIndex; index < this.nodeList.length; index++) {
+      if (this.state.isPaused || !this.state.isAudioOn) return;
+      this.setState({ currentIndex: index });
+      let node = this.nodeList[index];
+      let style = this.highlightUtil.buildTtsHighlightStyle(
+        this.props.currentBook.format === "PDF" &&
+          !ConfigService.getAllListConfig("convertPDFBooks").includes(
+            this.props.currentBook.key
+          ),
         ConfigService.getReaderConfig("textOrientation") === "vertical"
       );
-      htmlBook.rendition.highlightAudioNode(node.text, style);
+      this.props.htmlBook.rendition.highlightAudioNode(node.text, style);
       if (index === nodeIndex) {
         let result = await TTSUtil.cacheAudio(
           index,
           speed * 100 - 100,
-          plugins,
-          nodeListRef.current,
+          this.props.plugins,
+          this.nodeList,
           10,
           true,
           node.voiceEngine === "official-ai-voice-plugin"
         );
         toast.dismiss("tts-load");
         if (result === "error") {
-          toast.error(t("Audio loading failed, stopped playback"));
-          setState({ isAudioOn: false });
-          nodeListRef.current = [];
+          toast.error(this.props.t("Audio loading failed, stopped playback"));
+          this.setState({ isAudioOn: false });
+          this.nodeList = [];
           return;
         }
       }
-      if (nodeListRef.current[index].voiceEngine === "system") {
-        await handleSystemRead(index);
+      if (this.nodeList[index].voiceEngine === "system") {
+        await this.handleSystemRead(index);
         break;
       }
 
       TTSUtil.cacheAudio(
         index + 1,
         speed * 100 - 100,
-        plugins,
-        nodeListRef.current,
-        20,
+        this.props.plugins,
+        this.nodeList,
+        10,
         false,
         node.voiceEngine === "official-ai-voice-plugin"
       );
-      let res = await handleSpeech(index);
+      let res = await this.handleSpeech(index);
       if (res === "error") {
-        toast.error(t("Audio loading failed, stopped playback"));
-        setState({ isAudioOn: false });
-        nodeListRef.current = [];
+        toast.error(this.props.t("Audio loading failed, stopped playback"));
+        this.setState({ isAudioOn: false });
+        this.nodeList = [];
         return;
       }
-      if (stateRef.current.isPaused || !stateRef.current.isAudioOn) return;
-      let visibleTextList = await htmlBook.rendition.visibleText();
+      if (this.state.isPaused || !this.state.isAudioOn) return;
+      let visibleTextList = await this.props.htmlBook.rendition.visibleText();
       let lastVisibleTextList = visibleTextList;
 
       let rawNodeList = visibleTextList.map((text) => {
@@ -837,26 +726,31 @@ const TextToSpeech = () => {
 
       let isReachPageEnd = checkReachPageEnd(
         index,
-        nodeListRef.current,
+        this.nodeList,
         lastVisibleTextList,
-        currentBook
+        this.props.currentBook
       );
-      if (index === nodeListRef.current.length - 1) {
+      if (index === this.nodeList.length - 1) {
         isReachPageEnd = true;
       }
 
       if (isReachPageEnd) {
-        if (isReadingRawPDF(currentBook)) {
-          let currentPosition = htmlBook.rendition.getPosition();
-          await htmlBook.rendition.goToChapterIndex(
+        if (
+          this.props.currentBook.format === "PDF" &&
+          !ConfigService.getAllListConfig("convertPDFBooks").includes(
+            this.props.currentBook.key
+          )
+        ) {
+          let currentPosition = this.props.htmlBook.rendition.getPosition();
+          await this.props.htmlBook.rendition.goToChapterIndex(
             parseInt(currentPosition.chapterDocIndex) +
-              (readerMode === "double" ? 2 : 1)
+              (this.props.readerMode === "double" ? 2 : 1)
           );
         } else {
-          if (index === nodeListRef.current.length - 1) {
-            await htmlBook.rendition.nextChapter();
+          if (index === this.nodeList.length - 1) {
+            await this.props.htmlBook.rendition.nextChapter();
           } else {
-            await htmlBook.rendition.next();
+            await this.props.htmlBook.rendition.next();
           }
         }
       }
@@ -864,42 +758,45 @@ const TextToSpeech = () => {
         break;
       }
     }
-    if (stateRef.current.isAudioOn && isReading) {
-      // 重置内存缓存；磁盘 tts 缓存按内容哈希命名，保留复用
+    if (this.state.isAudioOn && this.props.isReading) {
+      await TTSUtil.clearAudioPaths();
       TTSUtil.setAudioPaths();
-      let position = htmlBook.rendition.getPosition();
+      let position = this.props.htmlBook.rendition.getPosition();
       ConfigService.setObjectConfig(
-        currentBook.key,
+        this.props.currentBook.key,
         position,
         "recordLocation"
       );
-      nodeListRef.current = [];
-      await handleAudio();
+      this.nodeList = [];
+      await this.handleAudio();
     }
   }
-  const handleSystemRead = async (index) => {
-    if (stateRef.current.isPaused || !stateRef.current.isAudioOn) return;
-    if (index >= nodeListRef.current.length) {
-      nodeListRef.current = [];
-      await handleAudio();
+  async handleSystemRead(index) {
+    if (this.state.isPaused || !this.state.isAudioOn) return;
+    if (index >= this.nodeList.length) {
+      this.nodeList = [];
+      await this.handleAudio();
       return;
     }
-    setState({ currentIndex: index });
-    let node = nodeListRef.current[index];
-    let style = highlightUtilRef.current.buildTtsHighlightStyle(
-      isReadingRawPDF(currentBook),
+    this.setState({ currentIndex: index });
+    let node = this.nodeList[index];
+    let style = this.highlightUtil.buildTtsHighlightStyle(
+      this.props.currentBook.format === "PDF" &&
+        !ConfigService.getAllListConfig("convertPDFBooks").includes(
+          this.props.currentBook.key
+        ),
       ConfigService.getReaderConfig("textOrientation") === "vertical"
     );
-    htmlBook.rendition.highlightAudioNode(node.text, style);
+    this.props.htmlBook.rendition.highlightAudioNode(node.text, style);
     toast.dismiss("tts-load");
-    let res = await handleSystemSpeech(
+    let res = await this.handleSystemSpeech(
       index,
       node.voiceName || ConfigService.getReaderConfig("voiceName"),
       parseFloat(ConfigService.getReaderConfig("voiceSpeed")) || 1
     );
 
     if (res === "start") {
-      let visibleTextList = await htmlBook.rendition.visibleText();
+      let visibleTextList = await this.props.htmlBook.rendition.visibleText();
 
       let lastVisibleTextList = visibleTextList;
 
@@ -911,57 +808,62 @@ const TextToSpeech = () => {
 
       let isReachPageEnd = checkReachPageEnd(
         index,
-        nodeListRef.current,
+        this.nodeList,
         lastVisibleTextList,
-        currentBook
+        this.props.currentBook
       );
-      if (index === nodeListRef.current.length - 1) {
+      if (index === this.nodeList.length - 1) {
         isReachPageEnd = true;
       }
       if (isReachPageEnd) {
-        if (isReadingRawPDF(currentBook)) {
-          let currentPosition = htmlBook.rendition.getPosition();
-          await htmlBook.rendition.goToChapterIndex(
+        if (
+          this.props.currentBook.format === "PDF" &&
+          !ConfigService.getAllListConfig("convertPDFBooks").includes(
+            this.props.currentBook.key
+          )
+        ) {
+          let currentPosition = this.props.htmlBook.rendition.getPosition();
+          await this.props.htmlBook.rendition.goToChapterIndex(
             parseInt(currentPosition.chapterDocIndex) +
-              (readerMode === "double" ? 2 : 1)
+              (this.props.readerMode === "double" ? 2 : 1)
           );
         } else {
-          if (index === nodeListRef.current.length - 1) {
-            await htmlBook.rendition.nextChapter();
+          if (index === this.nodeList.length - 1) {
+            await this.props.htmlBook.rendition.nextChapter();
           } else {
-            await htmlBook.rendition.next();
+            await this.props.htmlBook.rendition.next();
           }
         }
       }
       if (
-        stateRef.current.isAudioOn &&
-        isReading &&
-        index === nodeListRef.current.length
+        this.state.isAudioOn &&
+        this.props.isReading &&
+        index === this.nodeList.length
       ) {
-        let position = htmlBook.rendition.getPosition();
+        let position = this.props.htmlBook.rendition.getPosition();
         ConfigService.setObjectConfig(
-          currentBook.key,
+          this.props.currentBook.key,
           position,
           "recordLocation"
         );
-        nodeListRef.current = [];
-        await handleAudio();
+        this.nodeList = [];
+        await this.handleAudio();
         return;
       }
       index++;
       if (
-        nodeListRef.current[index] &&
-        nodeListRef.current[index].voiceEngine !== "system"
+        this.nodeList[index] &&
+        this.nodeList[index].voiceEngine !== "system"
       ) {
-        await handleCustomRead(index);
+        await this.handleCustomRead(index);
       } else {
-        await handleSystemRead(index);
+        await this.handleSystemRead(index);
       }
     } else if (res === "end") {
       return;
     }
   }
-  const handleSpeech = async (index: number) => {
+  handleSpeech = async (index: number) => {
     return new Promise<string>(async (resolve) => {
       let res = await TTSUtil.readAloud(index);
       if (res === "loaderror") {
@@ -969,7 +871,7 @@ const TextToSpeech = () => {
       } else {
         let player = TTSUtil.getPlayer();
         player.on("end", async () => {
-          if (!(stateRef.current.isAudioOn && isReading)) {
+          if (!(this.state.isAudioOn && this.props.isReading)) {
             resolve("end");
           }
           resolve("start");
@@ -977,26 +879,24 @@ const TextToSpeech = () => {
       }
     });
   };
-  const handleSystemSpeech = async (
+  handleSystemSpeech = async (
     index: number,
     voiceName: string,
     speed: number
   ) => {
     return new Promise<string>(async (resolve) => {
       var msg = new SpeechSynthesisUtterance();
-      msg.text = TTSUtil.applyTextRules(
-        nodeListRef.current[index].text
-          .replace(/\s\s/g, "")
-          .replace(/\r/g, "")
-          .replace(/\n/g, "")
-          .replace(/\t/g, "")
-          .replace(/&/g, "")
-          .replace(/\f/g, "")
-      );
+      msg.text = this.nodeList[index].text
+        .replace(/\s\s/g, "")
+        .replace(/\r/g, "")
+        .replace(/\n/g, "")
+        .replace(/\t/g, "")
+        .replace(/&/g, "")
+        .replace(/\f/g, "");
       if (!voiceName) {
-        voiceName = nativeVoicesRef.current[0]?.name;
+        voiceName = this.nativeVoices[0]?.name;
       }
-      msg.voice = nativeVoicesRef.current.find(
+      msg.voice = this.nativeVoices.find(
         (voice: any) => voice.name === voiceName
       );
       msg.rate = speed;
@@ -1008,16 +908,16 @@ const TextToSpeech = () => {
       };
 
       msg.onend = async () => {
-        if (!(stateRef.current.isAudioOn && isReading)) {
+        if (!(this.state.isAudioOn && this.props.isReading)) {
           resolve("end");
         }
         resolve("start");
       };
     });
   };
-  const handleVoiceLocaleList = () => {
+  handleVoiceLocaleList = () => {
     let voiceList = {};
-    let totalVoiceList = voicesRef.current;
+    let totalVoiceList = this.voices;
     totalVoiceList.forEach((voice) => {
       if (!voiceList[voice.locale]) {
         voiceList[voice.locale] = [];
@@ -1043,19 +943,19 @@ const TextToSpeech = () => {
         return a.lang.localeCompare(b.lang);
       })
       .map((item) => item.lang);
-    setState({ languageList, voiceList });
+    this.setState({ languageList, voiceList });
   };
-  const render = () => {
+  render() {
     return (
       <>
         <div className="tts-player-container">
           <div className="tts-player-controls">
             <span
               className="tts-player-btn"
-              title={t("Stop")}
-              onClick={() => handleStop()}
+              title={this.props.t("Stop")}
+              onClick={() => this.handleStop()}
               style={
-                !stateRef.current.isAudioOn
+                !this.state.isAudioOn
                   ? { opacity: 0.3, cursor: "not-allowed" }
                   : {}
               }
@@ -1071,10 +971,10 @@ const TextToSpeech = () => {
             </span>
             <span
               className="tts-player-btn"
-              title={t("Previous")}
-              onClick={() => handlePrevSentence()}
+              title={this.props.t("Previous")}
+              onClick={() => this.handlePrevSentence()}
               style={
-                !stateRef.current.isAudioOn
+                !this.state.isAudioOn
                   ? { opacity: 0.3, cursor: "not-allowed" }
                   : {}
               }
@@ -1091,23 +991,23 @@ const TextToSpeech = () => {
             <span
               className="tts-player-btn tts-player-btn-main"
               title={
-                !stateRef.current.isAudioOn
-                  ? t("Play")
-                  : stateRef.current.isPaused
-                    ? t("Resume")
-                    : t("Pause")
+                !this.state.isAudioOn
+                  ? this.props.t("Play")
+                  : this.state.isPaused
+                    ? this.props.t("Resume")
+                    : this.props.t("Pause")
               }
               onClick={() => {
-                if (!stateRef.current.isAudioOn && !stateRef.current.isPaused) {
-                  handleStartAudio();
-                } else if (!stateRef.current.isPaused) {
-                  handlePauseAudio();
+                if (!this.state.isAudioOn && !this.state.isPaused) {
+                  this.handleStartAudio();
+                } else if (!this.state.isPaused) {
+                  this.handlePauseAudio();
                 } else {
-                  handlePauseResume();
+                  this.handlePauseResume();
                 }
               }}
             >
-              {!stateRef.current.isAudioOn || stateRef.current.isPaused ? (
+              {!this.state.isAudioOn || this.state.isPaused ? (
                 <svg
                   viewBox="0 0 24 24"
                   width="28"
@@ -1129,10 +1029,10 @@ const TextToSpeech = () => {
             </span>
             <span
               className="tts-player-btn"
-              title={t("Next")}
-              onClick={() => handleNextSentence()}
+              title={this.props.t("Next")}
+              onClick={() => this.handleNextSentence()}
               style={
-                !stateRef.current.isAudioOn
+                !this.state.isAudioOn
                   ? { opacity: 0.3, cursor: "not-allowed" }
                   : {}
               }
@@ -1148,10 +1048,10 @@ const TextToSpeech = () => {
             </span>
             <span
               className="tts-player-btn"
-              title={t("Stop")}
-              onClick={() => handleStop()}
+              title={this.props.t("Stop")}
+              onClick={() => this.handleStop()}
               style={
-                !stateRef.current.isAudioOn
+                !this.state.isAudioOn
                   ? { opacity: 0.3, cursor: "not-allowed" }
                   : {}
               }
@@ -1166,9 +1066,9 @@ const TextToSpeech = () => {
               </svg>
             </span>
           </div>
-          {stateRef.current.isAudioOn && nodeListRef.current.length > 0 && (
+          {this.state.isAudioOn && this.nodeList.length > 0 && (
             <div className="tts-player-info">
-              {stateRef.current.currentIndex + 1} / {nodeListRef.current.length}
+              {this.state.currentIndex + 1} / {this.nodeList.length}
             </div>
           )}
         </div>
@@ -1189,10 +1089,10 @@ const TextToSpeech = () => {
             value={ConfigService.getReaderConfig("voiceLocale")}
             onChange={(event) => {
               ConfigService.setReaderConfig("voiceLocale", event.target.value);
-              setState({ voiceLocale: event.target.value });
+              this.setState({ voiceLocale: event.target.value });
             }}
           >
-            {stateRef.current.languageList.map((item) => {
+            {this.state.languageList.map((item) => {
               return (
                 <option value={item} key={item} className="lang-setting-option">
                   {langToName(item)}
@@ -1209,7 +1109,7 @@ const TextToSpeech = () => {
             fontWeight: 500,
           }}
         >
-          {renderVoicePreviewLabel(
+          {this.renderVoicePreviewLabel(
             "Voice",
             ConfigService.getReaderConfig("voiceName"),
             ConfigService.getReaderConfig("voiceEngine")
@@ -1227,7 +1127,8 @@ const TextToSpeech = () => {
               let [voiceName, plugin] = selectedValue.split("#");
               const previousEngine =
                 ConfigService.getReaderConfig("voiceEngine");
-              let voice = voicesRef.current.find(
+              ConfigService.setReaderConfig("voiceName", voiceName);
+              let voice = this.voices.find(
                 (item) => item.name === voiceName && item.plugin === plugin
               );
               if (!voice) {
@@ -1236,23 +1137,22 @@ const TextToSpeech = () => {
               const newEngine = voice.plugin || "system";
               if (
                 newEngine === "official-ai-voice-plugin" &&
-                !isAuthed
+                !this.props.isAuthed
               ) {
                 toast(
-                  t("Please upgrade to Pro to use this feature")
+                  this.props.t("Please upgrade to Pro to use this feature")
                 );
-                handleSetting(true);
-                handleSettingMode("account");
+                this.props.handleSetting(true);
+                this.props.handleSettingMode("account");
                 return;
               }
-              ConfigService.setReaderConfig("voiceName", voiceName);
               ConfigService.setReaderConfig("voiceEngine", newEngine);
               if (
                 voice.plugin === "official-ai-voice-plugin" &&
                 event.target.value.indexOf("Neural") > -1
               ) {
                 toast(
-                  t(
+                  this.props.t(
                     "Due to the high cost of Azure TTS voices, this voice will consume 5 times of your daily quota than normal voice"
                   ),
                   {
@@ -1261,14 +1161,14 @@ const TextToSpeech = () => {
                   }
                 );
               }
-              toast.success(t("Setup successful"));
-              if (stateRef.current.isAudioOn) {
-                handleVoiceSwitch(voiceName, newEngine, previousEngine);
+              toast.success(this.props.t("Setup successful"));
+              if (this.state.isAudioOn) {
+                this.handleVoiceSwitch(voiceName, newEngine, previousEngine);
               }
-              forceUpdate();
+              this.forceUpdate();
             }}
           >
-            {(stateRef.current.voiceList[stateRef.current.voiceLocale] || voicesRef.current).map(
+            {(this.state.voiceList[this.state.voiceLocale] || this.voices).map(
               (item) => {
                 return (
                   <option
@@ -1276,7 +1176,7 @@ const TextToSpeech = () => {
                     key={[item.name, item.plugin].join("#")}
                     className="lang-setting-option"
                   >
-                    {t(item.displayName || item.name)}
+                    {this.props.t(item.displayName || item.name)}
                   </option>
                 );
               }
@@ -1296,10 +1196,10 @@ const TextToSpeech = () => {
             value={ConfigService.getReaderConfig("voiceSpeed") || "1"}
             onChange={(event) => {
               ConfigService.setReaderConfig("voiceSpeed", event.target.value);
-              if (stateRef.current.isAudioOn) {
-                toast(t("Take effect in a while"));
+              if (this.state.isAudioOn) {
+                toast(this.props.t("Take effect in a while"));
               }
-              forceUpdate();
+              this.forceUpdate();
             }}
           >
             {speedList.option.map((item) => (
@@ -1321,35 +1221,51 @@ const TextToSpeech = () => {
               textAlign: "center",
             }}
             onClick={() => {
-              handlePluginSettingTab("voice");
-              handleSetting(true);
-              handleSettingMode("plugins");
+              this.props.handleSetting(true);
+              this.props.handleSettingMode("plugins");
             }}
           >
             <Trans>Add new voice</Trans>
           </span>
         </div>
         {/* Multi-role reading section */}
-        <SwitchRow
-          variant="setting"
-          title={
-            <>
-              <Trans>AI multi-role speech</Trans>
-              <span style={{ fontSize: "13px", color: "#f16464" }}> (Pro)</span>
-            </>
-          }
-          titleStyle={{ width: "calc(100% - 50px)" }}
+        <div
+          className="setting-dialog-new-title"
           style={{
             marginLeft: "20px",
             width: "88%",
             marginTop: "20px",
             fontWeight: 500,
           }}
-          isEnabled={stateRef.current.multiRoleEnabled}
-          onClick={() => {
-            handleMultiRoleToggle(!stateRef.current.multiRoleEnabled);
-          }}
-        />
+        >
+          <span style={{ width: "calc(100% - 50px)" }}>
+            <Trans>AI multi-role speech</Trans>
+            <span style={{ fontSize: "13px", color: "#f16464" }}> (Pro)</span>
+          </span>
+
+          <span
+            className="single-control-switch"
+            onClick={() => {
+              this.handleMultiRoleToggle(!this.state.multiRoleEnabled);
+            }}
+            style={this.state.multiRoleEnabled ? {} : { opacity: 0.6 }}
+          >
+            <span
+              className="single-control-button"
+              style={
+                this.state.multiRoleEnabled
+                  ? {
+                      transform: "translateX(20px)",
+                      transition: "transform 0.5s ease",
+                    }
+                  : {
+                      transform: "translateX(0px)",
+                      transition: "transform 0.5s ease",
+                    }
+              }
+            ></span>
+          </span>
+        </div>
         <p
           className="setting-option-subtitle"
           style={{ marginLeft: "20px", marginRight: "20px" }}
@@ -1360,7 +1276,7 @@ const TextToSpeech = () => {
             }
           </Trans>
         </p>
-        {stateRef.current.multiRoleEnabled && (
+        {this.state.multiRoleEnabled && (
           <>
             {/* Voice Type Selection */}
             <div
@@ -1372,48 +1288,29 @@ const TextToSpeech = () => {
                 name=""
                 className="lang-setting-dropdown"
                 id="multi-role-voice-type"
-                value={stateRef.current.multiRoleVoiceType}
+                value={this.state.multiRoleVoiceType}
                 onChange={(event) => {
-                  if (event.target.value === stateRef.current.multiRoleVoiceType)
-                    return;
-                  setState({ multiRoleVoiceType: event.target.value });
+                  this.setState({ multiRoleVoiceType: event.target.value });
                   ConfigService.setReaderConfig(
                     "multiRoleVoiceType",
                     event.target.value
                   );
-                  // 切换声音类型后清除各角色旧类型的 voice/engine 配置，
-                  // 避免遗留“系统声音 + AI 引擎”之类的混合组合
-                  ["Narrator", "Male", "Female", "Child"].forEach((role) => {
-                    ConfigService.setReaderConfig(`multiRole${role}Voice`, "");
-                    ConfigService.setReaderConfig(`multiRole${role}Engine`, "");
-                  });
-                  setState({
-                    multiRoleNarratorVoice: "",
-                    multiRoleNarratorEngine: "",
-                    multiRoleMaleVoice: "",
-                    multiRoleMaleEngine: "",
-                    multiRoleFemaleVoice: "",
-                    multiRoleFemaleEngine: "",
-                    multiRoleChildVoice: "",
-                    multiRoleChildEngine: "",
-                  });
-                  toast(t("Please reselect voices for all roles"));
                 }}
               >
                 <option value="" className="lang-setting-option">
-                  {t("Please select")}
+                  {this.props.t("Please select")}
                 </option>
                 <option value="system" className="lang-setting-option">
-                  {t("System voice")}
+                  {this.props.t("System voice")}
                 </option>
                 <option
                   value="official-ai-voice-plugin"
                   className="lang-setting-option"
                 >
-                  {t("Official AI Voice")}
+                  {this.props.t("Official AI Voice")}
                 </option>
                 <option value="custom" className="lang-setting-option">
-                  {t("Custom voice")}
+                  {this.props.t("Custom voice")}
                 </option>
               </select>
             </div>
@@ -1422,20 +1319,20 @@ const TextToSpeech = () => {
               className="setting-dialog-new-title"
               style={{ marginLeft: "20px", width: "88%", fontWeight: 500 }}
             >
-              {renderVoicePreviewLabel(
+              {this.renderVoicePreviewLabel(
                 "Narrator voice",
-                stateRef.current.multiRoleNarratorVoice,
-                stateRef.current.multiRoleNarratorEngine
+                this.state.multiRoleNarratorVoice,
+                this.state.multiRoleNarratorEngine
               )}
               <select
                 name=""
                 className="lang-setting-dropdown"
                 id="multi-role-narrator-voice"
                 value={
-                  stateRef.current.multiRoleNarratorVoice
+                  this.state.multiRoleNarratorVoice
                     ? [
-                        stateRef.current.multiRoleNarratorVoice,
-                        stateRef.current.multiRoleNarratorEngine,
+                        this.state.multiRoleNarratorVoice,
+                        this.state.multiRoleNarratorEngine,
                       ].join("#")
                     : ""
                 }
@@ -1450,24 +1347,24 @@ const TextToSpeech = () => {
                     "multiRoleNarratorEngine",
                     plugin || "system"
                   );
-                  setState({
+                  this.setState({
                     multiRoleNarratorVoice: voiceName,
                     multiRoleNarratorEngine: plugin || "system",
                   });
-                  toast.success(t("Setup successful"));
+                  toast.success(this.props.t("Setup successful"));
                 }}
               >
                 <option value="" className="lang-setting-option">
-                  {t("Please select")}
+                  {this.props.t("Please select")}
                 </option>
-                {getVoicesByType(stateRef.current.multiRoleVoiceType).map(
+                {this.getVoicesByType(this.state.multiRoleVoiceType).map(
                   (item) => (
                     <option
                       value={[item.name, item.plugin].join("#")}
                       key={[item.name, item.plugin].join("#")}
                       className="lang-setting-option"
                     >
-                      {t(item.displayName || item.name)}
+                      {this.props.t(item.displayName || item.name)}
                     </option>
                   )
                 )}
@@ -1478,20 +1375,20 @@ const TextToSpeech = () => {
               className="setting-dialog-new-title"
               style={{ marginLeft: "20px", width: "88%", fontWeight: 500 }}
             >
-              {renderVoicePreviewLabel(
+              {this.renderVoicePreviewLabel(
                 "Male voice",
-                stateRef.current.multiRoleMaleVoice,
-                stateRef.current.multiRoleMaleEngine
+                this.state.multiRoleMaleVoice,
+                this.state.multiRoleMaleEngine
               )}
               <select
                 name=""
                 className="lang-setting-dropdown"
                 id="multi-role-male-voice"
                 value={
-                  stateRef.current.multiRoleMaleVoice
+                  this.state.multiRoleMaleVoice
                     ? [
-                        stateRef.current.multiRoleMaleVoice,
-                        stateRef.current.multiRoleMaleEngine,
+                        this.state.multiRoleMaleVoice,
+                        this.state.multiRoleMaleEngine,
                       ].join("#")
                     : ""
                 }
@@ -1506,17 +1403,17 @@ const TextToSpeech = () => {
                     "multiRoleMaleEngine",
                     plugin || "system"
                   );
-                  setState({
+                  this.setState({
                     multiRoleMaleVoice: voiceName,
                     multiRoleMaleEngine: plugin || "system",
                   });
-                  toast.success(t("Setup successful"));
+                  toast.success(this.props.t("Setup successful"));
                 }}
               >
                 <option value="" className="lang-setting-option">
-                  {t("Please select")}
+                  {this.props.t("Please select")}
                 </option>
-                {getVoicesByType(stateRef.current.multiRoleVoiceType)
+                {this.getVoicesByType(this.state.multiRoleVoiceType)
                   .filter((item) => !item.gender || item.gender === "male")
                   .map((item) => (
                     <option
@@ -1524,7 +1421,7 @@ const TextToSpeech = () => {
                       key={[item.name, item.plugin].join("#")}
                       className="lang-setting-option"
                     >
-                      {t(item.displayName || item.name)}
+                      {this.props.t(item.displayName || item.name)}
                     </option>
                   ))}
               </select>
@@ -1534,20 +1431,20 @@ const TextToSpeech = () => {
               className="setting-dialog-new-title"
               style={{ marginLeft: "20px", width: "88%", fontWeight: 500 }}
             >
-              {renderVoicePreviewLabel(
+              {this.renderVoicePreviewLabel(
                 "Female voice",
-                stateRef.current.multiRoleFemaleVoice,
-                stateRef.current.multiRoleFemaleEngine
+                this.state.multiRoleFemaleVoice,
+                this.state.multiRoleFemaleEngine
               )}
               <select
                 name=""
                 className="lang-setting-dropdown"
                 id="multi-role-female-voice"
                 value={
-                  stateRef.current.multiRoleFemaleVoice
+                  this.state.multiRoleFemaleVoice
                     ? [
-                        stateRef.current.multiRoleFemaleVoice,
-                        stateRef.current.multiRoleFemaleEngine,
+                        this.state.multiRoleFemaleVoice,
+                        this.state.multiRoleFemaleEngine,
                       ].join("#")
                     : ""
                 }
@@ -1562,17 +1459,17 @@ const TextToSpeech = () => {
                     "multiRoleFemaleEngine",
                     plugin || "system"
                   );
-                  setState({
+                  this.setState({
                     multiRoleFemaleVoice: voiceName,
                     multiRoleFemaleEngine: plugin || "system",
                   });
-                  toast.success(t("Setup successful"));
+                  toast.success(this.props.t("Setup successful"));
                 }}
               >
                 <option value="" className="lang-setting-option">
-                  {t("Please select")}
+                  {this.props.t("Please select")}
                 </option>
-                {getVoicesByType(stateRef.current.multiRoleVoiceType)
+                {this.getVoicesByType(this.state.multiRoleVoiceType)
                   .filter((item) => !item.gender || item.gender === "female")
                   .map((item) => (
                     <option
@@ -1580,7 +1477,7 @@ const TextToSpeech = () => {
                       key={[item.name, item.plugin].join("#")}
                       className="lang-setting-option"
                     >
-                      {t(item.displayName || item.name)}
+                      {this.props.t(item.displayName || item.name)}
                     </option>
                   ))}
               </select>
@@ -1590,20 +1487,20 @@ const TextToSpeech = () => {
               className="setting-dialog-new-title"
               style={{ marginLeft: "20px", width: "88%", fontWeight: 500 }}
             >
-              {renderVoicePreviewLabel(
+              {this.renderVoicePreviewLabel(
                 "Child voice",
-                stateRef.current.multiRoleChildVoice,
-                stateRef.current.multiRoleChildEngine
+                this.state.multiRoleChildVoice,
+                this.state.multiRoleChildEngine
               )}
               <select
                 name=""
                 className="lang-setting-dropdown"
                 id="multi-role-child-voice"
                 value={
-                  stateRef.current.multiRoleChildVoice
+                  this.state.multiRoleChildVoice
                     ? [
-                        stateRef.current.multiRoleChildVoice,
-                        stateRef.current.multiRoleChildEngine,
+                        this.state.multiRoleChildVoice,
+                        this.state.multiRoleChildEngine,
                       ].join("#")
                     : ""
                 }
@@ -1618,24 +1515,24 @@ const TextToSpeech = () => {
                     "multiRoleChildEngine",
                     plugin || "system"
                   );
-                  setState({
+                  this.setState({
                     multiRoleChildVoice: voiceName,
                     multiRoleChildEngine: plugin || "system",
                   });
-                  toast.success(t("Setup successful"));
+                  toast.success(this.props.t("Setup successful"));
                 }}
               >
                 <option value="" className="lang-setting-option">
-                  {t("Please select")}
+                  {this.props.t("Please select")}
                 </option>
-                {getVoicesByType(stateRef.current.multiRoleVoiceType).map(
+                {this.getVoicesByType(this.state.multiRoleVoiceType).map(
                   (item) => (
                     <option
                       value={[item.name, item.plugin].join("#")}
                       key={[item.name, item.plugin].join("#")}
                       className="lang-setting-option"
                     >
-                      {t(item.displayName || item.name)}
+                      {this.props.t(item.displayName || item.name)}
                     </option>
                   )
                 )}
@@ -1645,9 +1542,7 @@ const TextToSpeech = () => {
         )}
       </>
     );
-  };
-
-  return render();
-};
+  }
+}
 
 export default TextToSpeech;

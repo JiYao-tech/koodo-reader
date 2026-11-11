@@ -1,7 +1,6 @@
-import { useLatest } from "../../../utils/hooks/useLatest";
-import { useTranslation } from "react-i18next";
-import { useEffect, useState } from "react";
+import React from "react";
 import { Trans } from "react-i18next";
+import { MoreSettingProps, MoreSettingState } from "./interface";
 import toast from "react-hot-toast";
 import {
   clearProtection,
@@ -18,56 +17,34 @@ import { vexPasswordInputAsync, vexSelectAsync } from "../../../utils/common";
 import i18n from "../../../i18n";
 import { isElectron } from "react-device-detect";
 import TokenService from "../../../utils/storage/tokenService";
-import SwitchRow from "../../../components/readerSettings/switchRow";
 
-export interface MoreSettingState {
-  protectionMethod: string;
-  biometricAvailable: boolean;
-  pinInputMode: "none" | "setup-enter" | "setup-confirm" | "verify";
-  pinValue: string;
-  pinFirstValue: string;
-  pinCallback: ((pin: string | false) => void) | null;
-  proxyEnabled: boolean;
-  proxyType: "none" | "http" | "socks5";
-  proxyHost: string;
-  proxyPort: string;
-  proxyUsername: string;
-  proxyPassword: string;
-  isTestingProxy: boolean;
-  proxyEditing: boolean;
-}
+class MoreSetting extends React.Component<MoreSettingProps, MoreSettingState> {
+  constructor(props: MoreSettingProps) {
+    super(props);
+    this.state = {
+      protectionMethod: "",
+      biometricAvailable: false,
+      pinInputMode: "none",
+      pinValue: "",
+      pinFirstValue: "",
+      pinCallback: null,
+      proxyEnabled: false,
+      proxyType: "none",
+      proxyHost: "",
+      proxyPort: "",
+      proxyUsername: "",
+      proxyPassword: "",
+      isTestingProxy: false,
+      proxyEditing: false,
+    };
+  }
 
-const MoreSetting = () => {
-  const { t } = useTranslation();
-  const [state, setState] = useState<MoreSettingState>({
-    protectionMethod: "",
-    biometricAvailable: false,
-    pinInputMode: "none",
-    pinValue: "",
-    pinFirstValue: "",
-    pinCallback: null,
-    proxyEnabled: false,
-    proxyType: "none",
-    proxyHost: "",
-    proxyPort: "",
-    proxyUsername: "",
-    proxyPassword: "",
-    isTestingProxy: false,
-    proxyEditing: false,
-  });
-  const stateRef = useLatest(state);
-
-  const updateState = (patch: Partial<MoreSettingState>) => {
-    stateRef.current = { ...stateRef.current, ...patch };
-    setState((prev) => ({ ...prev, ...patch }));
-  };
-
-  useEffect(() => {
+  componentDidMount() {
     Promise.all([
       TokenService.getToken("protection_method"),
       getBiometricCapability(),
     ]).then(([method, biometricCapability]) => {
-      updateState({
+      this.setState({
         protectionMethod: method || "",
         biometricAvailable: biometricCapability.available,
       });
@@ -76,7 +53,7 @@ const MoreSetting = () => {
       const ipcRenderer = window.electronAPI;
       ipcRenderer.invoke("get-proxy-config").then((cfg: any) => {
         if (!cfg) return;
-        updateState({
+        this.setState({
           proxyEnabled: cfg.enabled && cfg.type !== "none",
           proxyType: cfg.type || "none",
           proxyHost: cfg.host || "",
@@ -86,12 +63,11 @@ const MoreSetting = () => {
         });
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }
 
-  const showPinKeypad = (mode: "setup" | "verify"): Promise<string | false> => {
+  showPinKeypad = (mode: "setup" | "verify"): Promise<string | false> => {
     return new Promise((resolve) => {
-      updateState({
+      this.setState({
         pinInputMode: mode === "setup" ? "setup-enter" : "verify",
         pinValue: "",
         pinFirstValue: "",
@@ -100,50 +76,49 @@ const MoreSetting = () => {
     });
   };
 
-  const handlePinDigit = (digit: string) => {
-    const { pinValue, pinInputMode, pinFirstValue, pinCallback } =
-      stateRef.current;
+  handlePinDigit = (digit: string) => {
+    const { pinValue, pinInputMode, pinFirstValue, pinCallback } = this.state;
     if (pinValue.length >= 6) return;
     const next = pinValue + digit;
-    if (next.length === 6) {
-      if (pinInputMode === "setup-enter") {
-        updateState({
-          pinInputMode: "setup-confirm",
-          pinFirstValue: next,
-          pinValue: "",
-        });
-      } else if (pinInputMode === "setup-confirm") {
-        if (next === pinFirstValue) {
-          updateState({
-            pinInputMode: "none",
+    this.setState({ pinValue: next }, async () => {
+      if (next.length === 6) {
+        if (pinInputMode === "setup-enter") {
+          this.setState({
+            pinInputMode: "setup-confirm",
+            pinFirstValue: next,
             pinValue: "",
-            pinFirstValue: "",
           });
+        } else if (pinInputMode === "setup-confirm") {
+          if (next === pinFirstValue) {
+            this.setState({
+              pinInputMode: "none",
+              pinValue: "",
+              pinFirstValue: "",
+            });
+            pinCallback && pinCallback(next);
+          } else {
+            toast.error(this.props.t("PINs do not match, please try again"));
+            this.setState({
+              pinValue: "",
+              pinFirstValue: "",
+              pinInputMode: "setup-enter",
+            });
+          }
+        } else if (pinInputMode === "verify") {
+          this.setState({ pinInputMode: "none", pinValue: "" });
           pinCallback && pinCallback(next);
-        } else {
-          toast.error(t("PINs do not match, please try again"));
-          updateState({
-            pinValue: "",
-            pinFirstValue: "",
-            pinInputMode: "setup-enter",
-          });
         }
-      } else if (pinInputMode === "verify") {
-        updateState({ pinInputMode: "none", pinValue: "" });
-        pinCallback && pinCallback(next);
       }
-      return;
-    }
-    updateState({ pinValue: next });
+    });
   };
 
-  const handlePinDelete = () => {
-    updateState({ pinValue: stateRef.current.pinValue.slice(0, -1) });
+  handlePinDelete = () => {
+    this.setState((s) => ({ pinValue: s.pinValue.slice(0, -1) }));
   };
 
-  const handlePinCancel = () => {
-    const { pinCallback } = stateRef.current;
-    updateState({
+  handlePinCancel = () => {
+    const { pinCallback } = this.state;
+    this.setState({
       pinInputMode: "none",
       pinValue: "",
       pinFirstValue: "",
@@ -152,42 +127,42 @@ const MoreSetting = () => {
     pinCallback && pinCallback(false);
   };
 
-  const verifyCurrentMethod = async (): Promise<boolean> => {
-    const { protectionMethod } = stateRef.current;
+  verifyCurrentMethod = async (): Promise<boolean> => {
+    const { protectionMethod } = this.state;
     if (protectionMethod === "password") {
       const input = await vexPasswordInputAsync(
         i18n.t("Enter your current password")
       );
       if (!input) return false;
       const ok = await verifyPassword(input as string);
-      if (!ok) toast.error(t("Incorrect password"));
+      if (!ok) toast.error(this.props.t("Incorrect password"));
       return ok;
     } else if (protectionMethod === "pin") {
-      const pin = await showPinKeypad("verify");
+      const pin = await this.showPinKeypad("verify");
       if (pin === false) return false;
       const ok = await verifyPin(pin as string);
-      if (!ok) toast.error(t("Incorrect PIN"));
+      if (!ok) toast.error(this.props.t("Incorrect PIN"));
       return ok;
     } else if (protectionMethod === "biometric") {
       const result = await promptBiometricAuth(
         i18n.t("Authenticate to change protection settings")
       );
       if (!result.success) {
-        toast.error(getBiometricErrorMessage(result.code, t));
+        toast.error(getBiometricErrorMessage(result.code, this.props.t));
       }
       return result.success;
     }
     return true;
   };
 
-  const handleToggleProtection = async () => {
-    const { protectionMethod, biometricAvailable } = stateRef.current;
+  handleToggleProtection = async () => {
+    const { protectionMethod, biometricAvailable } = this.state;
     if (protectionMethod) {
-      const verified = await verifyCurrentMethod();
+      const verified = await this.verifyCurrentMethod();
       if (!verified) return;
       await clearProtection();
-      updateState({ protectionMethod: "" });
-      toast.success(t("Change successful"));
+      this.setState({ protectionMethod: "" });
+      toast.success(this.props.t("Change successful"));
     } else {
       const methodOptions: { value: string; label: string }[] = [
         { value: "password", label: "Password" },
@@ -201,41 +176,43 @@ const MoreSetting = () => {
         methodOptions
       );
       if (!method) return;
-      await setupMethod(method as string);
+      await this.setupMethod(method as string);
     }
   };
 
-  const handleChangeMethod = async (newMethod: string) => {
-    const { protectionMethod } = stateRef.current;
+  handleChangeMethod = async (newMethod: string) => {
+    const { protectionMethod } = this.state;
     if (newMethod === protectionMethod) return;
-    const verified = await verifyCurrentMethod();
+    const verified = await this.verifyCurrentMethod();
     if (!verified) return;
-    await setupMethod(newMethod);
+    await this.setupMethod(newMethod);
   };
 
-  const setupMethod = async (method: string) => {
+  setupMethod = async (method: string) => {
     if (method === "password") {
       const input = await vexPasswordInputAsync(
         i18n.t("Enter new password"),
         i18n.t("Confirm new password")
       );
       if (input === false) {
-        toast.error(t("Passwords do not match or input is empty"));
+        toast.error(this.props.t("Passwords do not match or input is empty"));
         return;
       }
       await setProtectionPassword(input as string);
-      updateState({ protectionMethod: "password" });
-      toast.success(t("Change successful"));
+      this.setState({ protectionMethod: "password" });
+      toast.success(this.props.t("Change successful"));
     } else if (method === "pin") {
-      const pin = await showPinKeypad("setup");
+      const pin = await this.showPinKeypad("setup");
       if (pin === false) return;
       await setProtectionPin(pin as string);
-      updateState({ protectionMethod: "pin" });
-      toast.success(t("Change successful"));
+      this.setState({ protectionMethod: "pin" });
+      toast.success(this.props.t("Change successful"));
     } else if (method === "biometric") {
-      if (!stateRef.current.biometricAvailable) {
+      if (!this.state.biometricAvailable) {
         toast.error(
-          t("Biometric authentication is not available on this device")
+          this.props.t(
+            "Biometric authentication is not available on this device"
+          )
         );
         return;
       }
@@ -243,18 +220,18 @@ const MoreSetting = () => {
         i18n.t("Authenticate to enable biometric protection")
       );
       if (!result.success) {
-        toast.error(getBiometricErrorMessage(result.code, t));
+        toast.error(getBiometricErrorMessage(result.code, this.props.t));
         return;
       }
       await setProtectionBiometric();
-      updateState({ protectionMethod: "biometric" });
-      toast.success(t("Change successful"));
+      this.setState({ protectionMethod: "biometric" });
+      toast.success(this.props.t("Change successful"));
     }
   };
 
-  const handleToggleProxy = () => {
-    if (stateRef.current.proxyEnabled) {
-      updateState({
+  handleToggleProxy = () => {
+    if (this.state.proxyEnabled) {
+      this.setState({
         proxyEnabled: false,
         proxyType: "none",
         proxyHost: "",
@@ -274,10 +251,10 @@ const MoreSetting = () => {
           password: "",
         });
       }
-      toast.success(t("Change successful"));
+      toast.success(this.props.t("Change successful"));
       return;
     }
-    updateState({
+    this.setState({
       proxyEnabled: true,
       proxyType: "http",
       proxyHost: "",
@@ -288,9 +265,9 @@ const MoreSetting = () => {
     });
   };
 
-  const handleChangeProxyType = (newType: "http" | "socks5") => {
-    if (newType === stateRef.current.proxyType) return;
-    updateState({
+  handleChangeProxyType = (newType: "http" | "socks5") => {
+    if (newType === this.state.proxyType) return;
+    this.setState({
       proxyType: newType,
       proxyHost: "",
       proxyPort: "",
@@ -300,22 +277,22 @@ const MoreSetting = () => {
     });
   };
 
-  const handleTestConnection = async () => {
+  handleTestConnection = async () => {
     const { proxyType, proxyHost, proxyPort, proxyUsername, proxyPassword } =
-      stateRef.current;
+      this.state;
     if (!proxyHost || !proxyPort) {
-      toast.error(t("Please enter host and port"));
+      toast.error(this.props.t("Please enter host and port"));
       return;
     }
     const portNum = parseInt(proxyPort);
     if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
-      toast.error(t("Please enter host and port"));
+      toast.error(this.props.t("Please enter host and port"));
       return;
     }
     if (!window.electronAPI) return;
     const ipcRenderer = window.electronAPI;
-    updateState({ isTestingProxy: true });
-    toast.loading(t("Testing connection..."), {
+    this.setState({ isTestingProxy: true });
+    toast.loading(this.props.t("Testing connection..."), {
       id: "proxy-test-id",
     });
     try {
@@ -328,23 +305,24 @@ const MoreSetting = () => {
       });
       if (res && res.ok) {
         toast.success(
-          t("Connection successful") + ` (${res.elapsedMs}ms)`,
+          this.props.t("Connection successful") + ` (${res.elapsedMs}ms)`,
           { id: "proxy-test-id" }
         );
       } else {
         toast.error(
-          t("Connection failed") + `: ${res?.reason || res?.detail || ""}`,
+          this.props.t("Connection failed") +
+            `: ${res?.reason || res?.detail || ""}`,
           { id: "proxy-test-id" }
         );
       }
     } catch (e) {
-      toast.error(t("Connection failed"), { id: "proxy-test-id" });
+      toast.error(this.props.t("Connection failed"), { id: "proxy-test-id" });
     } finally {
-      updateState({ isTestingProxy: false });
+      this.setState({ isTestingProxy: false });
     }
   };
 
-  const handleSaveProxyConfig = async () => {
+  handleSaveProxyConfig = async () => {
     const {
       proxyEnabled,
       proxyType,
@@ -352,14 +330,14 @@ const MoreSetting = () => {
       proxyPort,
       proxyUsername,
       proxyPassword,
-    } = stateRef.current;
+    } = this.state;
     if (!proxyHost || !proxyPort) {
-      toast.error(t("Please enter host and port"));
+      toast.error(this.props.t("Please enter host and port"));
       return;
     }
     const portNum = parseInt(proxyPort);
     if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
-      toast.error(t("Please enter host and port"));
+      toast.error(this.props.t("Please enter host and port"));
       return;
     }
     if (!window.electronAPI) return;
@@ -374,18 +352,18 @@ const MoreSetting = () => {
         password: proxyPassword,
       });
       if (res && res.ok) {
-        updateState({ proxyEditing: false });
-        toast.success(t("Added successfully"));
+        this.setState({ proxyEditing: false });
+        toast.success(this.props.t("Added successfully"));
       } else {
-        toast.error(t("Save failed"));
+        toast.error(this.props.t("Save failed"));
       }
     } catch (e) {
-      toast.error(t("Save failed"));
+      toast.error(this.props.t("Save failed"));
     }
   };
 
-  const renderPinKeypad = () => {
-    const { pinInputMode, pinValue } = state;
+  renderPinKeypad() {
+    const { pinInputMode, pinValue } = this.state;
     if (pinInputMode === "none") return null;
 
     let title = "";
@@ -432,7 +410,7 @@ const MoreSetting = () => {
                   <button
                     key={idx}
                     className="pin-key pin-key-empty"
-                    onClick={handlePinDelete}
+                    onClick={this.handlePinDelete}
                   >
                     <span
                       className="icon-close"
@@ -445,240 +423,286 @@ const MoreSetting = () => {
                 <button
                   key={idx}
                   className="pin-key"
-                  onClick={() => handlePinDigit(String(d))}
+                  onClick={() => this.handlePinDigit(String(d))}
                 >
                   {d}
                 </button>
               );
             })}
           </div>
-          <button className="pin-key-cancel" onClick={handlePinCancel}>
+          <button className="pin-key-cancel" onClick={this.handlePinCancel}>
             <Trans>Cancel</Trans>
           </button>
         </div>
       </div>
     );
-  };
+  }
 
-  const {
-    protectionMethod,
-    biometricAvailable,
-    proxyEnabled,
-    proxyType,
-    proxyHost,
-    proxyPort,
-    proxyUsername,
-    proxyPassword,
-    isTestingProxy,
-    proxyEditing,
-  } = state;
-  const isEnabled = !!protectionMethod;
-  const showBiometricOption =
-    biometricAvailable || protectionMethod === "biometric";
-  const showSocksAuthWarning =
-    proxyType === "socks5" && (proxyUsername || proxyPassword);
+  render() {
+    const {
+      protectionMethod,
+      biometricAvailable,
+      proxyEnabled,
+      proxyType,
+      proxyHost,
+      proxyPort,
+      proxyUsername,
+      proxyPassword,
+      isTestingProxy,
+      proxyEditing,
+    } = this.state;
+    const isEnabled = !!protectionMethod;
+    const showBiometricOption =
+      biometricAvailable || protectionMethod === "biometric";
+    const showSocksAuthWarning =
+      proxyType === "socks5" && (proxyUsername || proxyPassword);
 
-  return (
-    <>
-      {renderPinKeypad()}
-      <SwitchRow
-        variant="setting"
-        title={<Trans>Enable software protection</Trans>}
-        isEnabled={isEnabled}
-        onClick={handleToggleProtection}
-      />
-      <p className="setting-option-subtitle">
-        <Trans>
-          When enabled, the app will require authentication on every launch
-        </Trans>
-      </p>
-
-      {isEnabled && (
-        <>
-          <div className="setting-dialog-new-title" key="protection-method">
-            <Trans>Protection method</Trans>
-            <select
-              className="lang-setting-dropdown"
-              value={protectionMethod}
-              onChange={(e) => handleChangeMethod(e.target.value)}
-              style={{ textAlign: "left" }}
-            >
-              <option value="password">{t("Password")}</option>
-              <option value="pin">{t("PIN")}</option>
-              {showBiometricOption && (
-                <option value="biometric">{t("Biometric")}</option>
-              )}
-            </select>
-          </div>
-          <p className="setting-option-subtitle">
-            {protectionMethod === "password" && (
-              <Trans>Use a custom password to protect the app</Trans>
-            )}
-            {protectionMethod === "pin" && (
-              <Trans>Use a 6-digit PIN to protect the app</Trans>
-            )}
-            {protectionMethod === "biometric" && (
-              <Trans>Use Touch ID or Windows Hello to protect the app</Trans>
-            )}
-          </p>
-        </>
-      )}
-      {isElectron && (
-        <>
-          <SwitchRow
-            variant="setting"
-            title={<Trans>Network proxy</Trans>}
-            isEnabled={proxyEnabled}
-            onClick={handleToggleProxy}
-          />
-          <p className="setting-option-subtitle">
-            <Trans>Route all network requests through a proxy</Trans>
-          </p>
-        </>
-      )}
-
-      {proxyEnabled && (
-        <>
-          <div className="setting-dialog-new-title" key="proxy-type">
-            <Trans>Proxy type</Trans>
-            <select
-              className="lang-setting-dropdown"
-              value={proxyType}
-              onChange={(e) =>
-                handleChangeProxyType(e.target.value as "http" | "socks5")
+    return (
+      <>
+        {this.renderPinKeypad()}
+        <div className="setting-dialog-new-title" key="protection-toggle">
+          <span style={{ width: "calc(100% - 100px)" }}>
+            <Trans>Enable software protection</Trans>
+          </span>
+          <span
+            className="single-control-switch"
+            onClick={this.handleToggleProtection}
+            style={isEnabled ? {} : { opacity: 0.6 }}
+          >
+            <span
+              className="single-control-button"
+              style={
+                isEnabled
+                  ? {
+                      transform: "translateX(20px)",
+                      transition: "transform 0.5s ease",
+                    }
+                  : {
+                      transform: "translateX(0px)",
+                      transition: "transform 0.5s ease",
+                    }
               }
-              style={{ textAlign: "left" }}
-            >
-              <option value="http">HTTP</option>
-              <option value="socks5">SOCKS5</option>
-            </select>
-          </div>
-          {proxyEditing && (
-            <div
-              style={{
-                marginLeft: "25px",
-                marginRight: "25px",
-              }}
-            >
-              <div key="proxy-host">
-                <input
-                  className="token-dialog-username-box"
-                  value={proxyHost}
-                  onChange={(e) => updateState({ proxyHost: e.target.value })}
-                  placeholder={t("Proxy host")}
-                />
-              </div>
-              <div
-                style={{
-                  marginTop: "5px",
-                  marginBottom: "2px",
-                  marginLeft: "2px",
-                  fontSize: "12px",
-                  opacity: 0.8,
-                }}
+            />
+          </span>
+        </div>
+        <p className="setting-option-subtitle">
+          <Trans>
+            When enabled, the app will require authentication on every launch
+          </Trans>
+        </p>
+
+        {isEnabled && (
+          <>
+            <div className="setting-dialog-new-title" key="protection-method">
+              <Trans>Protection method</Trans>
+              <select
+                className="lang-setting-dropdown"
+                value={protectionMethod}
+                onChange={(e) => this.handleChangeMethod(e.target.value)}
+                style={{ textAlign: "left" }}
               >
-                {t("Example")}: {"127.0.0.1"}
-              </div>
-              <div key="proxy-port">
-                <input
-                  className="token-dialog-username-box"
-                  type="number"
-                  value={proxyPort}
-                  onChange={(e) => updateState({ proxyPort: e.target.value })}
-                  placeholder={t("Proxy port")}
-                />
-              </div>
-              <div
-                style={{
-                  marginTop: "5px",
-                  marginBottom: "2px",
-                  marginLeft: "2px",
-                  fontSize: "12px",
-                  opacity: 0.8,
-                }}
-              >
-                {t("Example")}: {"1080"}
-              </div>
-              <div key="proxy-username">
-                <input
-                  className="token-dialog-username-box"
-                  value={proxyUsername}
-                  onChange={(e) =>
-                    updateState({ proxyUsername: e.target.value })
-                  }
-                  placeholder={
-                    t("Proxy username") +
-                    " (" +
-                    t("Optional") +
-                    ")"
-                  }
-                />
-              </div>
-              <div key="proxy-password">
-                <input
-                  className="token-dialog-username-box"
-                  type="password"
-                  value={proxyPassword}
-                  onChange={(e) =>
-                    updateState({ proxyPassword: e.target.value })
-                  }
-                  placeholder={
-                    t("Proxy password") +
-                    " (" +
-                    t("Optional") +
-                    ")"
-                  }
-                />
-              </div>
-              {showSocksAuthWarning && (
-                <p
-                  className="setting-option-subtitle"
-                  style={{ color: "#d6732d" }}
-                >
-                  <Trans>
-                    SOCKS5 authentication is not supported for in-app requests;
-                    use HTTP proxy instead
-                  </Trans>
-                </p>
-              )}
-              <div
-                className="setting-dialog-new-title"
-                key="proxy-actions"
-                style={{
-                  display: "flex",
-                  gap: "8px",
-                  margin: "0px",
-                  marginTop: "20px",
-                  width: "100%",
-                }}
-              >
-                <div
-                  className="voice-add-confirm"
-                  style={{
-                    marginRight: "0px",
-                  }}
-                  onClick={handleTestConnection}
-                >
-                  {isTestingProxy
-                    ? t("Testing connection...")
-                    : t("Test connection")}
-                </div>
-                <div
-                  className="voice-add-confirm"
-                  style={{
-                    marginRight: "0px",
-                  }}
-                  onClick={handleSaveProxyConfig}
-                >
-                  {t("Save")}
-                </div>
-              </div>
+                <option value="password">{this.props.t("Password")}</option>
+                <option value="pin">{this.props.t("PIN")}</option>
+                {showBiometricOption && (
+                  <option value="biometric">{this.props.t("Biometric")}</option>
+                )}
+              </select>
             </div>
-          )}
-        </>
-      )}
-    </>
-  );
-};
+            <p className="setting-option-subtitle">
+              {protectionMethod === "password" && (
+                <Trans>Use a custom password to protect the app</Trans>
+              )}
+              {protectionMethod === "pin" && (
+                <Trans>Use a 6-digit PIN to protect the app</Trans>
+              )}
+              {protectionMethod === "biometric" && (
+                <Trans>Use Touch ID or Windows Hello to protect the app</Trans>
+              )}
+            </p>
+          </>
+        )}
+        {isElectron && (
+          <>
+            <div className="setting-dialog-new-title" key="proxy-toggle">
+              <span style={{ width: "calc(100% - 100px)" }}>
+                <Trans>Network proxy</Trans>
+              </span>
+              <span
+                className="single-control-switch"
+                onClick={this.handleToggleProxy}
+                style={proxyEnabled ? {} : { opacity: 0.6 }}
+              >
+                <span
+                  className="single-control-button"
+                  style={
+                    proxyEnabled
+                      ? {
+                          transform: "translateX(20px)",
+                          transition: "transform 0.5s ease",
+                        }
+                      : {
+                          transform: "translateX(0px)",
+                          transition: "transform 0.5s ease",
+                        }
+                  }
+                />
+              </span>
+            </div>
+            <p className="setting-option-subtitle">
+              <Trans>Route all network requests through a proxy</Trans>
+            </p>
+          </>
+        )}
+
+        {proxyEnabled && (
+          <>
+            <div className="setting-dialog-new-title" key="proxy-type">
+              <Trans>Proxy type</Trans>
+              <select
+                className="lang-setting-dropdown"
+                value={proxyType}
+                onChange={(e) =>
+                  this.handleChangeProxyType(
+                    e.target.value as "http" | "socks5"
+                  )
+                }
+                style={{ textAlign: "left" }}
+              >
+                <option value="http">HTTP</option>
+                <option value="socks5">SOCKS5</option>
+              </select>
+            </div>
+            {proxyEditing && (
+              <div
+                style={{
+                  marginLeft: "25px",
+                  marginRight: "25px",
+                }}
+              >
+                <div key="proxy-host">
+                  <input
+                    className="token-dialog-username-box"
+                    value={proxyHost}
+                    onChange={(e) =>
+                      this.setState({ proxyHost: e.target.value })
+                    }
+                    placeholder={this.props.t("Proxy host")}
+                  />
+                </div>
+                <div
+                  style={{
+                    marginTop: "5px",
+                    marginBottom: "2px",
+                    marginLeft: "2px",
+                    fontSize: "12px",
+                    opacity: 0.8,
+                  }}
+                >
+                  {this.props.t("Example")}: {"127.0.0.1"}
+                </div>
+                <div key="proxy-port">
+                  <input
+                    className="token-dialog-username-box"
+                    type="number"
+                    value={proxyPort}
+                    onChange={(e) =>
+                      this.setState({ proxyPort: e.target.value })
+                    }
+                    placeholder={this.props.t("Proxy port")}
+                  />
+                </div>
+                <div
+                  style={{
+                    marginTop: "5px",
+                    marginBottom: "2px",
+                    marginLeft: "2px",
+                    fontSize: "12px",
+                    opacity: 0.8,
+                  }}
+                >
+                  {this.props.t("Example")}: {"1080"}
+                </div>
+                <div key="proxy-username">
+                  <input
+                    className="token-dialog-username-box"
+                    value={proxyUsername}
+                    onChange={(e) =>
+                      this.setState({ proxyUsername: e.target.value })
+                    }
+                    placeholder={
+                      this.props.t("Proxy username") +
+                      " (" +
+                      this.props.t("Optional") +
+                      ")"
+                    }
+                  />
+                </div>
+                <div key="proxy-password">
+                  <input
+                    className="token-dialog-username-box"
+                    type="password"
+                    value={proxyPassword}
+                    onChange={(e) =>
+                      this.setState({ proxyPassword: e.target.value })
+                    }
+                    placeholder={
+                      this.props.t("Proxy password") +
+                      " (" +
+                      this.props.t("Optional") +
+                      ")"
+                    }
+                  />
+                </div>
+                {showSocksAuthWarning && (
+                  <p
+                    className="setting-option-subtitle"
+                    style={{ color: "#d6732d" }}
+                  >
+                    <Trans>
+                      SOCKS5 authentication is not supported for in-app
+                      requests; use HTTP proxy instead
+                    </Trans>
+                  </p>
+                )}
+                <div
+                  className="setting-dialog-new-title"
+                  key="proxy-actions"
+                  style={{
+                    display: "flex",
+                    gap: "8px",
+                    margin: "0px",
+                    marginTop: "20px",
+                    width: "100%",
+                  }}
+                >
+                  <div
+                    className="voice-add-confirm"
+                    style={{
+                      marginRight: "0px",
+                    }}
+                    onClick={this.handleTestConnection}
+                  >
+                    {isTestingProxy
+                      ? this.props.t("Testing connection...")
+                      : this.props.t("Test connection")}
+                  </div>
+                  <div
+                    className="voice-add-confirm"
+                    style={{
+                      marginRight: "0px",
+                    }}
+                    onClick={this.handleSaveProxyConfig}
+                  >
+                    {this.props.t("Save")}
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </>
+    );
+  }
+}
 
 export default MoreSetting;

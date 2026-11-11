@@ -11,14 +11,6 @@ class Book {
   page: number;
   path: string;
   charset: string;
-  published: string;
-  modified: string;
-  identifier: string;
-  language: string;
-  subject: string;
-  rights: string;
-  isbn: string;
-  layout: string;
   constructor(
     key: string,
     name: string,
@@ -31,15 +23,7 @@ class Book {
     size: number,
     page: number,
     path: string,
-    charset: string,
-    published = "",
-    modified = "",
-    identifier = "",
-    language = "",
-    subject = "",
-    rights = "",
-    isbn = "",
-    layout = ""
+    charset: string
   ) {
     this.key = key;
     this.name = name;
@@ -53,14 +37,6 @@ class Book {
     this.page = page;
     this.path = path;
     this.charset = charset;
-    this.published = published;
-    this.modified = modified;
-    this.identifier = identifier;
-    this.language = language;
-    this.subject = subject;
-    this.rights = rights;
-    this.isbn = isbn;
-    this.layout = layout;
   }
 }
 

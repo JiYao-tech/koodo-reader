@@ -1,8 +1,11 @@
 import React from "react";
 import "./bookListItem.css";
+import { BookItemProps } from "./interface";
 import { Trans } from "react-i18next";
+import { withRouter } from "react-router-dom";
 import EmptyCover from "../emptyCover";
 import ActionDialog from "../dialogs/actionDialog";
+import toast from "react-hot-toast";
 import { ConfigService } from "../../assets/lib/kookit-extra-browser.min";
 import { useBookItem } from "../bookItem/useBookItem";
 import { getFileNameWithoutExtension } from "../../utils/common";
@@ -11,72 +14,30 @@ import {
   estimateMenuHeight,
   CONTEXT_MENU_WIDTH,
 } from "../../utils/common";
-import { useAppStore } from "../../store/useAppStore";
-
-import BookModel from "../../models/Book";
-
-export interface BookItemProps {
-  book: BookModel;
-  isSelected?: boolean;
-  allBooks?: BookModel[];
-  bookIndex?: number;
-}
 
 declare var window: any;
 
 const BookListItem: React.FC<BookItemProps> = (props) => {
-  const isOpenActionDialog = useAppStore((s) => s.book.isOpenActionDialog);
-  const currentBook = useAppStore((s) => s.book.currentBook);
-  const isSelectBook = useAppStore((s) => s.manager.isSelectBook);
-  const selectedBooks = useAppStore((s) => s.manager.selectedBooks);
-  const refreshBookKey = useAppStore((s) => s.manager.refreshBookKey);
-  const handleReadingBook = useAppStore((s) => s.handleReadingBook);
-  const handleActionDialog = useAppStore((s) => s.handleActionDialog);
-  const handleRefreshBookCover = useAppStore((s) => s.handleRefreshBookCover);
-  const handleSelectBook = useAppStore((s) => s.handleSelectBook);
-  const handleSelectedBooks = useAppStore((s) => s.handleSelectedBooks);
-  const handleFetchBooks = useAppStore((s) => s.handleFetchBooks);
-  const handleCollectionDialogBooks = useAppStore(
-    (s) => s.handleCollectionDialogBooks
-  );
-  const handleAddCollectionDialog = useAppStore(
-    (s) => s.handleAddCollectionDialog
-  );
   const {
     left,
     setLeft,
     top,
     setTop,
+    direction,
     setDirection,
     isHover,
     setIsHover,
     cover,
     isCoverExist,
     isBookOffline,
-    isDropTarget,
     handleJump,
     handleSelectIconClick,
     handleBookDragStart,
-    handleBookDropDragOver,
-    handleBookDropDragEnter,
-    handleBookDropDragLeave,
-    handleBookBookDrop,
     getPercentage,
     isFavoriteBook,
     isTopBook,
-  } = useBookItem({
-    ...props,
-    refreshBookKey,
-    isSelectBook,
-    selectedBooks,
-    handleRefreshBookCover,
-    handleReadingBook,
-    handleSelectBook,
-    handleSelectedBooks,
-    handleFetchBooks,
-    handleCollectionDialogBooks,
-    handleAddCollectionDialog,
-  });
+    setIsFavorite,
+  } = useBookItem(props);
 
   const handleMoreAction = (event: any) => {
     event.preventDefault();
@@ -91,36 +52,26 @@ const BookListItem: React.FC<BookItemProps> = (props) => {
         ? e.clientY
         : e.clientY - 200,
       CONTEXT_MENU_WIDTH,
-      estimateMenuHeight(10)
+      estimateMenuHeight(9)
     );
     setLeft(pos.left);
     setTop(pos.top);
-    handleActionDialog(true);
-    handleReadingBook(props.book);
+    props.handleActionDialog(true);
+    props.handleReadingBook(props.book);
   };
 
   const percentage = getPercentage();
   const actionProps = { left, top };
-  const dropHandlers = {
-    onDragOver: handleBookDropDragOver,
-    onDragEnter: handleBookDropDragEnter,
-    onDragLeave: handleBookDropDragLeave,
-    onDrop: handleBookBookDrop,
-  };
 
   return (
     <>
       <div
-        className={
-          "book-list-item-container" +
-          (isDropTarget ? " book-drop-target" : "")
-        }
+        className="book-list-item-container"
         draggable
         onDragStart={handleBookDragStart}
         onContextMenu={(event) => {
           handleMoreAction(event);
         }}
-        {...dropHandlers}
       >
         {!isCoverExist ||
         (props.book.format === "PDF" &&
@@ -186,7 +137,7 @@ const BookListItem: React.FC<BookItemProps> = (props) => {
             />
           </div>
         )}
-        {isSelectBook || isHover ? (
+        {props.isSelectBook || isHover ? (
           <span
             className="icon-message book-selected-icon"
             onMouseEnter={() => {
@@ -247,7 +198,7 @@ const BookListItem: React.FC<BookItemProps> = (props) => {
           </div>
         </p>
       </div>
-      {isOpenActionDialog && props.book.key === currentBook.key ? (
+      {props.isOpenActionDialog && props.book.key === props.currentBook.key ? (
         <div className="action-dialog-parent">
           <ActionDialog {...(actionProps as any)} />
         </div>
@@ -256,4 +207,4 @@ const BookListItem: React.FC<BookItemProps> = (props) => {
   );
 };
 
-export default BookListItem;
+export default withRouter(BookListItem as any);

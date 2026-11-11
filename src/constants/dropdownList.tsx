@@ -1,7 +1,5 @@
 import i18n from "../i18n";
 import { KookitConfig } from "../assets/lib/kookit-extra-browser.min";
-import type PluginModel from "../models/Plugin";
-import { getBuiltinPluginDefinition } from "../utils/plugins/catalog";
 
 export const fullTranslationLangList = (() => {
   const seen = new Set<string>();
@@ -55,7 +53,6 @@ export const codeHighlightLangList = [
 export const dropdownList = [
   {
     title: "Book layout",
-    group: "layout",
     value: "bookLayout",
     option: [
       { label: "Default", value: "" },
@@ -73,22 +70,24 @@ export const dropdownList = [
   },
   {
     title: "Code highlighting",
-    group: "more",
     value: "codeHighlight",
     option: codeHighlightLangList,
     isPDF: false,
   },
   {
     title: "Default font family",
-    group: "font",
     value: "fontFamily",
     option: [{ label: "Built-in font", value: "Built-in font" }],
     isPDF: false,
   },
-
+  {
+    title: "CJK font family",
+    value: "subFontFamily",
+    option: [{ label: "Built-in font", value: "Built-in font" }],
+    isPDF: false,
+  },
   {
     title: "Line height",
-    group: "layout",
     value: "lineHeight",
     option: [
       { label: "Default", value: "" },
@@ -102,7 +101,6 @@ export const dropdownList = [
   },
   {
     title: "Text alignment",
-    group: "layout",
     value: "textAlign",
     option: [
       { label: "Default", value: "" },
@@ -114,7 +112,6 @@ export const dropdownList = [
   },
   {
     title: "Text orientation",
-    group: "layout",
     value: "textOrientation",
     option: [
       { label: "Default", value: "" },
@@ -125,7 +122,6 @@ export const dropdownList = [
   },
   {
     title: "Conversion of Chinese",
-    group: "more",
     value: "convertChinese",
     option: [
       { label: "Default", value: "" },
@@ -142,7 +138,6 @@ export const dropdownList = [
   },
   {
     title: "Page turning animation",
-    group: "more",
     value: "animation",
     option: [
       { label: "None", value: "none" },
@@ -153,7 +148,6 @@ export const dropdownList = [
   },
   {
     title: "Action after selecting text",
-    group: "more",
     value: "selectAction",
     option: [
       { label: "Default", value: "" },
@@ -182,7 +176,6 @@ export const dropdownList = [
   },
   {
     title: "Full text translation",
-    group: "more",
     value: "fullTranslationMode",
     option: [
       { label: "Disable", value: "no" },
@@ -195,13 +188,6 @@ export const dropdownList = [
         value: "target",
       },
     ],
-    isPDF: false,
-  },
-  {
-    title: "CJK font family",
-    group: "font",
-    value: "subFontFamily",
-    option: [{ label: "Built-in font", value: "Built-in font" }],
     isPDF: false,
   },
 ];
@@ -277,7 +263,6 @@ export const sliderConfigs = [
     maxLabel: "80",
     step: 1,
     title: "Font size",
-    group: "font",
     isPDF: false,
   },
   {
@@ -288,18 +273,6 @@ export const sliderConfigs = [
     maxLabel: "80",
     step: 5,
     title: "Margin",
-    group: "layout",
-    isPDF: true,
-  },
-  {
-    maxValue: 120,
-    minValue: 0,
-    mode: "pageGap",
-    minLabel: "0",
-    maxLabel: "120",
-    step: 2,
-    title: "Page gap",
-    group: "layout",
     isPDF: true,
   },
   {
@@ -310,7 +283,6 @@ export const sliderConfigs = [
     maxLabel: "20",
     step: 1,
     title: "Letter spacing",
-    group: "font",
     isPDF: false,
   },
   {
@@ -321,8 +293,17 @@ export const sliderConfigs = [
     maxLabel: "120",
     step: 1,
     title: "Paragraph spacing",
-    group: "layout",
     isPDF: false,
+  },
+  {
+    maxValue: 3,
+    minValue: 0.5,
+    mode: "scale",
+    minLabel: "0.5",
+    maxLabel: "3",
+    step: 0.1,
+    title: "Page width",
+    isPDF: true,
   },
   {
     maxValue: 1,
@@ -332,29 +313,8 @@ export const sliderConfigs = [
     maxLabel: "1",
     step: 0.1,
     title: "Brightness",
-    group: "theme",
     isPDF: true,
   },
-];
-export const pageWidthConfig = {
-  maxValue: 3,
-  minValue: 0.5,
-  mode: "scale",
-  minLabel: "50%",
-  maxLabel: "300%",
-  step: 0.1,
-  title: "Page width",
-  isPDF: true,
-};
-export const pageWidthPresetList = [
-  { label: "50%", value: "0.5" },
-  { label: "75%", value: "0.75" },
-  { label: "100%", value: "1" },
-  { label: "125%", value: "1.25" },
-  { label: "150%", value: "1.5" },
-  { label: "175%", value: "1.75" },
-  { label: "200%", value: "2" },
-  { label: "300%", value: "3" },
 ];
 export const speedList = {
   id: 3,
@@ -449,13 +409,7 @@ export const titleSizeList = [
   { label: "4", value: "4" },
   { label: "5", value: "5" },
 ];
-export interface OcrEngineOption {
-  label: string;
-  value: string;
-  lang: string;
-  isPro?: boolean;
-}
-export const ocrEngineList: OcrEngineOption[] = [
+export const ocrEngineList = [
   { label: "Please select", value: "", lang: "" },
   {
     label: "Official AI OCR",
@@ -479,22 +433,3 @@ export const ocrEngineList: OcrEngineOption[] = [
     lang: "chi_sim",
   },
 ];
-export const getOcrEngineList = (
-  plugins: PluginModel[] = []
-): OcrEngineOption[] => {
-  const pluginOptions = plugins.flatMap((plugin) => {
-    if (plugin.type !== "ocr") return [];
-    const definition = getBuiltinPluginDefinition(plugin.key);
-    if (!definition || definition.type !== "ocr") return [];
-    return [
-      {
-        label: i18n.language.startsWith("zh")
-          ? definition.name.zhCN
-          : definition.name.en,
-        value: plugin.key,
-        lang: "",
-      },
-    ];
-  });
-  return [...ocrEngineList, ...pluginOptions];
-};
